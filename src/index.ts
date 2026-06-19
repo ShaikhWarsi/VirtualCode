@@ -11,6 +11,11 @@ const TOKEN_FILE = join(homedir(), ".config", "opencode", "telegram-token.json")
 const TOKEN_TMP = TOKEN_FILE + ".tmp"
 const CONFIG_DIR = join(homedir(), ".config", "opencode")
 
+const TOKEN_REGEX = /^\d+:[\w-]+$/
+const MAX_LRU_SIZE = 100
+const PENDING_TIMEOUT_MS = 30_000
+const RECONNECT_DELAYS = [5_000, 10_000, 20_000, 30_000]
+
 function loadLinks(): Record<number, string> {
   try {
     if (existsSync(LINK_FILE)) {
@@ -50,6 +55,63 @@ function saveToken(token: string) {
   }
 }
 
+function isValidToken(token: string): boolean {
+  return TOKEN_REGEX.test(token)
+}
+
+function userError(err: unknown): string {
+  if (!err) return "Unknown error"
+  if (err instanceof Error) {
+    const first = err.message.split("\n")[0].trim()
+    return first || "Unknown error"
+  }
+  const s = String(err).split("\n")[0].trim()
+  return s || "Unknown error"
+}
+
+const DEBUG = !!process.env.DEBUG_TELEGRAM
+
+function debugLog(...args: unknown[]) {
+  console.error("[telegram-plugin]", ...args)
+  if (DEBUG) {
+    for (const a of args) {
+      if (a instanceof Error) console.error(a)
+    }
+  }
+}
+
+function sanitizeUI(text: string, maxLen = 200): string {
+  if (!text) return ""
+  let cleaned = text
+    .split("\n")
+    .filter((line) => !/^\s*at\s/.test(line))
+    .join(" ")
+    .trim()
+  cleaned = cleaned.replace(/\s+/g, " ")
+  if (cleaned.length > maxLen) {
+    cleaned = cleaned.slice(0, maxLen - 3).trim() + "..."
+  }
+  return cleaned
+}
+
+const KNOWN_ERRORS: [RegExp, string][] = [
+  [/Expected a string starting with "ses"/, "Invalid session ID."],
+  [/ECONNRESET/, "Connection lost."],
+  [/(409|Conflict)/, "Another bot instance running."],
+  [/(401|Unauthorized|invalid.*token)/i, "Invalid token."],
+  [/(403|Forbidden)/, "Bot blocked."],
+  [/(socket|timeout)/i, "Connection timed out."],
+]
+
+function handlePluginError(err: unknown, context: string): string {
+  const msg = userError(err)
+  debugLog(context + ":", msg)
+  for (const [pattern, friendly] of KNOWN_ERRORS) {
+    if (pattern.test(msg)) return friendly
+  }
+  return "Something went wrong."
+}
+
 function chunkText(text: string, maxLen = 4000): string[] {
   if (text.length <= maxLen) return [text]
   const chunks: string[] = []
@@ -59,8 +121,25 @@ function chunkText(text: string, maxLen = 4000): string[] {
   return chunks
 }
 
+function fmtId(id: string): string {
+  return id.length > 12 ? id.slice(0, 12) + "..." : id
+}
+
+type FindResult =
+  | { status: "found"; session: any }
+  | { status: "ambiguous" }
+  | { status: "not_found" }
+
+function findSessionById(id: string, list: any[]): FindResult {
+  const exact = list.find((s: any) => s.id === id)
+  if (exact) return { status: "found", session: exact }
+  const prefix = list.filter((s: any) => s.id.startsWith(id))
+  if (prefix.length === 1) return { status: "found", session: prefix[0] }
+  if (prefix.length > 1) return { status: "ambiguous" }
+  return { status: "not_found" }
+}
+
 const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
-  console.log("[telegram-plugin] initializing")
   const config = options as
     | {
         allowed_users?: number[]
@@ -74,8 +153,14 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
 
   let bot: Telegraf | null = null
   let botReady = false
-  let mcpCleanup: (() => void) | null = null
-  let expectingToken = false
+  let botStarting = false
+  let userStopped = false
+  let savedToken: string | null = null
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let reconnectAttempts = 0
+
+  const lastForwardedBySession = new Map<string, string>()
+  const pendingTelegram = new Map<string, { chatId: number; timer: ReturnType<typeof setTimeout> }>()
 
   const links = loadLinks()
   const chatToSession = new Map<number, string>()
@@ -122,354 +207,450 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
     persistLinks(links)
   }
 
-  async function sendToSession(sessionId: string, text: string) {
+  function lruSet(map: Map<string, string>, key: string, value: string) {
+    if (map.has(key)) {
+      map.delete(key)
+    } else if (map.size >= MAX_LRU_SIZE) {
+      const oldest = map.keys().next().value
+      if (oldest !== undefined) map.delete(oldest)
+    }
+    map.set(key, value)
+  }
+
+  function setPending(sessionId: string, chatId: number) {
+    const existing = pendingTelegram.get(sessionId)
+    if (existing) clearTimeout(existing.timer)
+    const timer = setTimeout(() => {
+      pendingTelegram.delete(sessionId)
+    }, PENDING_TIMEOUT_MS)
+    pendingTelegram.set(sessionId, { chatId, timer })
+  }
+
+  function clearPending(sessionId: string) {
+    const entry = pendingTelegram.get(sessionId)
+    if (entry) {
+      clearTimeout(entry.timer)
+      pendingTelegram.delete(sessionId)
+    }
+  }
+
+  function scheduleReconnect() {
+    if (userStopped || !savedToken) return
+    if (reconnectTimer) return
+    const delay = RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)]
+    reconnectAttempts++
+    debugLog("scheduling reconnect in", delay, "ms (attempt", reconnectAttempts + ")")
+    reconnectTimer = setTimeout(async () => {
+      reconnectTimer = null
+      if (savedToken && !userStopped) {
+        await startBot(savedToken)
+      }
+    }, delay)
+  }
+
+  async function sendToChats(chats: Iterable<number>, text: string) {
     if (!botReady) return
-    const chats = sessionToChats.get(sessionId)
-    if (!chats) return
     const chunks = chunkText(text)
     for (const chatId of chats) {
       for (const chunk of chunks) {
-        await bot!.telegram.sendMessage(chatId, chunk).catch(() => {})
+        try {
+          await bot!.telegram.sendMessage(chatId, chunk)
+        } catch (err) {
+          const msg = handlePluginError(err, "sendMessage")
+          if (msg.includes("blocked") || msg.includes("Invalid token")) {
+            botReady = false
+            scheduleReconnect()
+          }
+        }
       }
     }
   }
 
+  async function sendToSession(sessionId: string, text: string) {
+    const chats = sessionToChats.get(sessionId)
+    if (!chats) return
+    await sendToChats(chats, text)
+  }
+
   async function startBot(token: string) {
+    if (botStarting) return
+    if (!isValidToken(token)) {
+      debugLog("startBot: invalid token format")
+      return
+    }
+    botStarting = true
+    botReady = false
+    userStopped = false
+    savedToken = token
+    reconnectAttempts = 0
     try {
+      try { bot?.stop() } catch {}
       bot = new Telegraf(token)
+      bot.catch((err) => {
+        handlePluginError(err, "bot.catch")
+      })
+
+      bot.command("start", async (ctx) => {
+        if (allowedSet && !allowedSet.has(ctx.from.id)) return
+        await ctx.reply(
+          "virtualcode - OpenCode Telegram bridge\n\n" +
+          "Quick setup:\n" +
+          "1. /ls - list your sessions\n" +
+          "2. /link <ID> - bind this chat\n" +
+          "3. Send any message to talk to OpenCode\n\n" +
+          "Type /help for all commands."
+        )
+      })
 
       bot.command("link", async (ctx) => {
         if (allowedSet && !allowedSet.has(ctx.from.id)) return
-        const sessionId = ctx.payload.trim()
-        if (!sessionId) {
-          await ctx.reply("Usage: /link <sessionId>")
+        const arg = ctx.payload.trim()
+        if (!arg) {
+          await ctx.reply("Usage: /link <sessionID>")
           return
         }
-        const res = await client.session.get({ path: { id: sessionId } })
-        if (res.error) {
-          await ctx.reply("Session not found: " + sessionId.slice(0, 12) + "...")
-          return
+        try {
+          const list = await client.session.list()
+          if (list.error || !list.data) {
+            await ctx.reply("Could not load sessions.")
+            return
+          }
+          const result = findSessionById(arg, list.data)
+          if (result.status === "not_found") {
+            await ctx.reply("Session not found.")
+            return
+          }
+          if (result.status === "ambiguous") {
+            await ctx.reply("Multiple sessions match. Use the full ID from /ls.")
+            return
+          }
+          const old = links[ctx.chat.id]
+          addLink(ctx.chat.id, result.session.id)
+          if (old) {
+            await ctx.reply("Switched to " + fmtId(result.session.id) + " (from " + fmtId(old) + ")")
+          } else {
+            await ctx.reply("Linked to " + (result.session.title || fmtId(result.session.id)))
+          }
+        } catch (err) {
+          const msg = handlePluginError(err, "/link")
+          await ctx.reply(sanitizeUI(msg))
         }
-        addLink(ctx.chat.id, sessionId)
-        await ctx.reply("Linked to session: " + sessionId.slice(0, 12) + "...")
       })
 
       bot.command("unlink", async (ctx) => {
         if (allowedSet && !allowedSet.has(ctx.from.id)) return
         if (!links[ctx.chat.id]) {
-          await ctx.reply("No link found for this chat.")
+          await ctx.reply("Not linked.")
           return
         }
         removeLink(ctx.chat.id)
-        await ctx.reply("Unlinked from session.")
+        await ctx.reply("Unlinked.")
       })
 
       bot.command("status", async (ctx) => {
         if (allowedSet && !allowedSet.has(ctx.from.id)) return
         const sessionId = links[ctx.chat.id]
         if (!sessionId) {
-          await ctx.reply("Not linked. Use /link <sessionId>")
+          await ctx.reply("Not linked. Use /link <ID>")
           return
         }
         await ctx.reply(
-          "Connected\nSession: " + sessionId.slice(0, 12) + "...\nProject: " + (directory || "unknown")
+          "Connected | Session: " + fmtId(sessionId) + " | Project: " + (directory || "none")
         )
       })
 
-      bot.command("sessions", async (ctx) => {
+      bot.command(["ls", "sessions"], async (ctx) => {
         if (allowedSet && !allowedSet.has(ctx.from.id)) return
-        const res = await client.session.list()
-        if (res.error || !res.data) {
-          await ctx.reply("Failed to list sessions.")
+        try {
+          const res = await client.session.list()
+          if (res.error || !res.data) {
+            await ctx.reply("Could not load sessions.")
+            return
+          }
+          const current = links[ctx.chat.id]
+          const lines = res.data.slice(-20).map((s: any, i: number, arr: any[]) => {
+            const num = arr.length - i
+            const marker = s.id === current ? " *" : ""
+            const label = s.title || s.id.slice(0, 16)
+            return num + ". " + label + " -- " + s.id + marker
+          })
+          await ctx.reply("Sessions:\n" + (lines.length ? lines.join("\n") : "None"))
+        } catch (err) {
+          const msg = handlePluginError(err, "/ls")
+          await ctx.reply(sanitizeUI(msg))
+        }
+      })
+
+      bot.command("use", async (ctx) => {
+        if (allowedSet && !allowedSet.has(ctx.from.id)) return
+        const arg = ctx.payload.trim()
+        if (!arg) {
+          await ctx.reply("Usage: /use <number|ID>")
           return
         }
-        const sessions = res.data
-        const current = links[ctx.chat.id]
-        const lines = sessions
-          .slice(-10)
-          .map((s) => {
-            const marker = s.id === current ? " \u2705" : ""
-            return s.id + marker
-          })
-        await ctx.reply("*Recent sessions:*\n" + (lines.length ? lines.join("\n") : "None"))
+        try {
+          const res = await client.session.list()
+          if (res.error || !res.data) {
+            await ctx.reply("Could not load sessions.")
+            return
+          }
+          const num = parseInt(arg)
+          if (!isNaN(num) && num > 0) {
+            if (num > res.data.length) {
+              await ctx.reply("Only " + res.data.length + " sessions available.")
+              return
+            }
+            const s = res.data[res.data.length - num]
+            if (!s) return
+            addLink(ctx.chat.id, s.id)
+            await ctx.reply("Switched to " + (s.title || fmtId(s.id)))
+            return
+          }
+          const result = findSessionById(arg, res.data)
+          if (result.status === "not_found") {
+            await ctx.reply("Session not found.")
+            return
+          }
+          if (result.status === "ambiguous") {
+            await ctx.reply("Multiple sessions match. Use the full ID from /ls.")
+            return
+          }
+          addLink(ctx.chat.id, result.session.id)
+          await ctx.reply("Switched to " + (result.session.title || fmtId(result.session.id)))
+        } catch (err) {
+          const msg = handlePluginError(err, "/use")
+          await ctx.reply(sanitizeUI(msg))
+        }
+      })
+
+      bot.command("history", async (ctx) => {
+        if (allowedSet && !allowedSet.has(ctx.from.id)) return
+        const sessionId = links[ctx.chat.id]
+        if (!sessionId) {
+          await ctx.reply("Not linked. Use /link <ID>")
+          return
+        }
+        try {
+          const limitText = ctx.payload.trim()
+          const limit = limitText ? Math.min(parseInt(limitText) || 20, 100) : 20
+          const res = await client.session.messages({ path: { id: sessionId }, query: { directory, limit } })
+          if (res.error || !res.data || res.data.length === 0) {
+            await ctx.reply("No messages found.")
+            return
+          }
+          const lines: string[] = []
+          for (const msg of res.data) {
+            const role = msg.info.role === "user" ? "[User]" : "[AI]"
+            const text = (msg.parts as any[])
+              .filter((p: any) => p.type === "text" && !p.synthetic)
+              .map((p: any) => p.text)
+              .join("\n")
+              .trim()
+            if (!text) continue
+            const truncated = text.length > 500 ? text.slice(0, 500) + "..." : text
+            lines.push(role + " " + truncated)
+          }
+          if (lines.length === 0) {
+            await ctx.reply("No text messages found.")
+            return
+          }
+          const text = lines.join("\n\n")
+          for (const chunk of chunkText(text)) {
+            await ctx.reply(chunk)
+          }
+        } catch (err) {
+          const msg = handlePluginError(err, "/history")
+          await ctx.reply(sanitizeUI(msg))
+        }
       })
 
       bot.command("help", async (ctx) => {
         if (allowedSet && !allowedSet.has(ctx.from.id)) return
         await ctx.reply(
-          "/link <sessionId> - Bind this chat to a session\n" +
-          "/unlink - Remove binding\n" +
-          "/status - Show connection state\n" +
-          "/sessions - List recent sessions\n" +
-          "/help - Show this help\n\n" +
+          "/link <sessionId>     - Bind this chat to a session\n" +
+          "/unlink               - Remove binding\n" +
+          "/status               - Show connection state\n" +
+          "/ls                   - List recent sessions\n" +
+          "/use <number|ID>      - Switch active session\n" +
+          "/history [N]          - View last N messages\n" +
+          "/help                 - Show this help\n\n" +
           "Any other message will be sent to the linked session."
         )
+      })
+
+      bot.on(["photo", "sticker", "document", "video", "audio", "voice"], async (ctx) => {
+        if (allowedSet && !allowedSet.has(ctx.from.id)) return
+        await ctx.reply("Only text messages are supported.")
       })
 
       bot.on("text", async (ctx) => {
         if (allowedSet && !allowedSet.has(ctx.from.id)) return
         const sessionId = links[ctx.chat.id]
         if (!sessionId) {
-          await ctx.reply("Not linked. Use /link <sessionId>")
+          await ctx.reply("Not linked. Use /link <ID>")
           return
         }
-        const working = await ctx.reply("\u23F3 Working...")
-        const res = await client.session.prompt({
-          path: { id: sessionId },
-          body: {
-            parts: [{ type: "text", text: ctx.message.text, metadata: { opencodeTelegram: true } }],
-          },
-          query: { directory },
-        })
-        try { await ctx.deleteMessage(working.message_id) } catch {}
-        if (res.error) {
-          await ctx.reply("Error: " + String(res.error).slice(0, 200))
-          return
-        }
-        const text = (res.data?.parts ?? [])
-          .filter((p: any) => p.type === "text" && !p.synthetic)
-          .map((p: any) => p.text)
-          .join("\n")
-        if (text) {
-          for (const chunk of chunkText(text)) {
-            await ctx.reply(chunk)
+        const working = await ctx.reply("...")
+        setPending(sessionId, ctx.chat.id)
+        try {
+          const res = await client.session.prompt({
+            path: { id: sessionId },
+            body: {
+              parts: [{ type: "text", text: ctx.message.text, metadata: { opencodeTelegram: true } }],
+            },
+            query: { directory },
+          })
+          if (res.error) {
+            const msg = handlePluginError(res.error, "prompt")
+            await ctx.reply(sanitizeUI(msg))
           }
+        } catch (err) {
+          const msg = handlePluginError(err, "prompt")
+          await ctx.reply(sanitizeUI(msg))
         }
+        clearPending(sessionId)
+        try { await ctx.deleteMessage(working.message_id) } catch {}
       })
 
       if (notifyOnReconnect) {
         for (const chatId of Object.keys(links)) {
-          bot.telegram.sendMessage(Number(chatId), "OpenCode Telegram bridge reconnected.").catch(() => {})
+          bot.telegram.sendMessage(Number(chatId), "Telegram bridge reconnected.").catch(() => {})
         }
       }
 
-      await Promise.race([
-        bot.launch(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 10000)),
-      ])
+      try {
+        await bot.telegram.getMe()
+      } catch (err) {
+        const msg = handlePluginError(err, "getMe")
+        debugLog("startBot failed:", msg)
+        botStarting = false
+        botReady = false
+        scheduleReconnect()
+        return
+      }
       botReady = true
-      console.log("[telegram-plugin] bot connected")
+      botStarting = false
+      bot.launch().catch((err) => {
+        handlePluginError(err, "bot.launch")
+        botReady = false
+        scheduleReconnect()
+      })
     } catch (err) {
-      console.warn("[telegram-plugin] bot failed to start:", err)
+      handlePluginError(err, "startBot")
+      botStarting = false
+      botReady = false
+      scheduleReconnect()
     }
   }
 
-  async function setupMcpServer() {
-    try {
-      const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js")
-      const { WebStandardStreamableHTTPServerTransport } = await import(
-        "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
-      )
-
-      const transport = new WebStandardStreamableHTTPServerTransport({
-        sessionIdGenerator: () => crypto.randomUUID(),
-      })
-
-      const mcpServer = new McpServer({
-        name: "@opencode-ai/plugin-telegram",
-        version: "1.0.0",
-      }, {
-        capabilities: { prompts: {} },
-      })
-
-      mcpServer.prompt("telegram", "Configure Telegram integration", async () => {
-        expectingToken = true
-        setTimeout(() => { expectingToken = false }, 120_000)
-        return {
-          messages: [{
-            role: "user",
-            content: {
-              type: "text",
-              text: botReady
-                ? "Telegram bot is connected. Show the user the status."
-                : "The user wants to set up Telegram. Guide them through the setup wizard. " +
-                  "Ask them to paste their BotFather token. When they do, the plugin will " +
-                  "automatically intercept it and connect the bot.",
-            },
-          }],
-        }
-      })
-
-      mcpServer.prompt("telegram-status", "Show Telegram connection status", async () => ({
-        messages: [{
-          role: "user",
-          content: {
-            type: "text",
-            text: botReady
-              ? "Telegram bot is connected and running. The user can use /link in Telegram."
-              : "Telegram bot is not configured yet. Type /telegram to set it up.",
-          },
-        }],
-      }))
-
-      await mcpServer.connect(transport)
-
-      let mcpPort: number
-      let mcpUrl: string
-      let closeServer: () => void
-
-      if (typeof Bun !== "undefined") {
-        const bunServer = Bun.serve({
-          port: 0,
-          fetch: (req: Request) => transport.handleRequest(req),
-        })
-        mcpPort = bunServer.port!
-        mcpUrl = `http://localhost:${mcpPort}`
-        closeServer = () => bunServer.stop()
-      } else {
-        const http = await import("node:http")
-        const nodeServer = http.createServer(async (nodeReq, nodeRes) => {
-          try {
-            const protocol = nodeReq.headers["x-forwarded-proto"]?.[0] === "https" ? "https" : "http"
-            const host = nodeReq.headers.host || "localhost"
-            const url = new URL(nodeReq.url || "/", `${protocol}://${host}`)
-
-            let body: string | undefined
-            if (nodeReq.method !== "GET" && nodeReq.method !== "DELETE") {
-              body = await new Promise<string>((resolve) => {
-                let data = ""
-                nodeReq.on("data", (chunk: Buffer) => data += chunk.toString())
-                nodeReq.on("end", () => resolve(data))
-              })
-            }
-
-            const headers = new Headers()
-            for (const [key, value] of Object.entries(nodeReq.headers)) {
-              if (value) headers.set(key, Array.isArray(value) ? value.join(", ") : value)
-            }
-
-            const request = new Request(url.toString(), {
-              method: nodeReq.method ?? "GET",
-              headers,
-              body: body ?? null,
-            })
-
-            const response = await transport.handleRequest(request)
-            nodeRes.statusCode = response.status
-            response.headers.forEach((value, key) => nodeRes.setHeader(key, value))
-            if (response.body) {
-              const reader = response.body.getReader()
-              const pump = () => reader.read().then(({ done, value }) => {
-                if (done) nodeRes.end()
-                else { nodeRes.write(value); pump() }
-              })
-              pump()
-            } else {
-              nodeRes.end()
-            }
-          } catch (err) {
-            nodeRes.statusCode = 500
-            nodeRes.end("Internal Server Error")
-          }
-        })
-        await new Promise<void>((resolve) => nodeServer.listen(0, resolve))
-        const addr = nodeServer.address() as { port: number }
-        mcpPort = addr.port
-        mcpUrl = `http://localhost:${mcpPort}`
-        closeServer = () => nodeServer.close()
-      }
-
-      const addResult = await client.mcp.add({
-        body: { name: "opencode-telegram", config: { type: "remote" as const, url: mcpUrl } },
-        query: { directory },
-      })
-
-      mcpCleanup = () => {
-        closeServer()
-        mcpServer.close().catch(() => {})
-        client.mcp.disconnect({ path: { name: "opencode-telegram" }, query: { directory } }).catch(() => {})
-      }
-
-      console.log(`[telegram-plugin] MCP server running on ${mcpUrl}`)
-    } catch (err) {
-      console.warn("[telegram-plugin] MCP server setup failed:", err)
-    }
-  }
-
-  const existingToken = config?.token || process.env.TELEGRAM_BOT_TOKEN || loadSavedToken()
+  const configToken = config?.token
+  const envToken = process.env.TELEGRAM_BOT_TOKEN
+  const fileToken = loadSavedToken()
+  const existingToken = configToken || envToken || fileToken
   if (existingToken) {
-    console.log("[telegram-plugin] token found, creating bot")
     await startBot(existingToken)
-  } else {
-    console.log("[telegram-plugin] no token found — type /telegram in OpenCode to set up")
   }
-
-  setupMcpServer()
 
   return {
     async event({ event }) {
       if (!botReady) return
-      if (event.type === "session.error") {
-        const sessionId = event.properties.sessionID
-        if (sessionId) {
-          const err = event.properties.error
-          const msg = err && "data" in err ? String(err.data.message) : String(err ?? "Unknown")
-          sendToSession(sessionId, "Error: " + msg.slice(0, 500))
+      try {
+        if (event.type === "session.error") {
+          const sessionId = event.properties.sessionID
+          if (sessionId) {
+            const err = event.properties.error
+            const msg = handlePluginError(err, "session.error")
+            sendToSession(sessionId, msg)
+          }
+          return
         }
+        if (event.type === "session.status" && event.properties.status.type === "idle") {
+          const sid = event.properties.sessionID
+          const pending = pendingTelegram.get(sid)
+          const chats = pending ? new Set([pending.chatId]) : sessionToChats.get(sid)
+          if (!chats || chats.size === 0) return
+          let msgs
+          try {
+            msgs = await client.session.messages({ path: { id: sid }, query: { directory, limit: 5 } })
+          } catch { return }
+          if (msgs.error || !msgs.data) return
+          const last = [...msgs.data].reverse().find((m: any) => m.info.role === "assistant")
+          if (!last || lastForwardedBySession.get(sid) === last.info.id) return
+          lruSet(lastForwardedBySession, sid, last.info.id)
+          const text = (last.parts as any[])
+            .filter((p: any) => p.type === "text" && !p.synthetic)
+            .map((p: any) => p.text)
+            .join("\n")
+          if (text) sendToChats(chats, text)
+        }
+      } catch (err) {
+        debugLog("event handler:", userError(err))
       }
     },
 
     "chat.message": async (_input, output) => {
-      if (!botReady && !expectingToken) {
-        const saved = loadSavedToken()
-        if (saved) {
-          console.log("[telegram-plugin] token found from TUI setup, connecting...")
-          await startBot(saved)
+      try {
+        if (!botReady && !botStarting) {
+          const configToken = config?.token
+          const envToken = process.env.TELEGRAM_BOT_TOKEN
+          const fileToken = loadSavedToken()
+          const saved = configToken || envToken || fileToken
+          if (saved) {
+            await startBot(saved)
+          }
         }
-      }
-      for (const part of output.parts as any[]) {
-        if (part.type !== "text") continue
-        const text = part.text
+        for (const part of output.parts as any[]) {
+          if (part.type !== "text") continue
+          const text = part.text
 
-        if (expectingToken && !botReady) {
-          const token = text.trim()
-          expectingToken = false
-          if (token.length > 20 && /^\d+:[\w-]+$/.test(token)) {
-            client.tui.showToast({
-              body: { title: "Telegram", message: "Connecting...", variant: "info" },
-              query: { directory },
-            }).catch(() => {})
+          if (text.startsWith("/telegram")) {
+            const args = text.slice("/telegram".length).trim().toLowerCase()
+
+            if (args === "disconnect" || args === "stop") {
+              userStopped = true
+              if (reconnectTimer) {
+                clearTimeout(reconnectTimer)
+                reconnectTimer = null
+              }
+              try { bot?.stop() } catch {}
+              botReady = false
+              bot = null
+              botStarting = false
+              savedToken = null
+              if (loadSavedToken()) saveToken("")
+              part.text = "Telegram bot disconnected and token removed."
+              return
+            }
+
+            if (args === "status" || args === "") {
+              if (botReady) {
+                part.text =
+                  "Telegram bot is connected.\n" +
+                  "- /telegram <new_token> - Change bot token\n" +
+                  "- /telegram disconnect - Stop bot and remove token\n" +
+                  "- /telegram - Open setup dialog (type /telegram in command palette)"
+              } else {
+                part.text =
+                  "Telegram bot is not connected.\n" +
+                  "- /telegram <your_bot_token> - Connect with a token\n" +
+                  "- /telegram - Open setup dialog (type /telegram in command palette)"
+              }
+              return
+            }
+
+            const token = args
+            if (!isValidToken(token)) {
+              part.text = "Invalid token."
+              return
+            }
             saveToken(token)
             await startBot(token)
-            if (botReady) {
-              client.tui.showToast({
-                body: { title: "Telegram", message: "Bot connected!", variant: "success", duration: 3000 },
-                query: { directory },
-              }).catch(() => {})
-              part.text = "\u2705 Telegram bot connected successfully! Use /help in the Telegram bot for commands."
-            } else {
-              part.text = "\u274c Invalid token. Try again with /telegram"
-            }
+            part.text = botReady ? "Connected." : "Invalid token."
             return
           }
         }
-
-        if (text.startsWith("/telegram")) {
-          const token = text.slice("/telegram".length).trim()
-          if (!token) {
-            part.text = botReady
-              ? "Telegram bot is already connected. Status: connected."
-              : "The user ran /telegram to set up Telegram. Guide them through the setup."
-            return
-          }
-          expectingToken = false
-          client.tui.showToast({
-            body: { title: "Telegram", message: "Connecting...", variant: "info" },
-            query: { directory },
-          }).catch(() => {})
-          saveToken(token)
-          await startBot(token)
-          if (botReady) {
-            client.tui.showToast({
-              body: { title: "Telegram", message: "Bot connected!", variant: "success", duration: 3000 },
-              query: { directory },
-            }).catch(() => {})
-          }
-          part.text = botReady
-            ? "\u2705 Telegram bot connected!"
-            : "\u274c Invalid token. Check the token from @BotFather and try again."
-          return
-        }
+      } catch (err) {
+        debugLog("chat.message:", userError(err))
       }
     },
 
@@ -489,13 +670,26 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
     },
 
     async dispose() {
-      bot?.stop()
-      mcpCleanup?.()
+      userStopped = true
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
+      for (const [, entry] of pendingTelegram) {
+        clearTimeout(entry.timer)
+      }
+      pendingTelegram.clear()
+      lastForwardedBySession.clear()
+      try { bot?.stop() } catch {}
+      botReady = false
+      botStarting = false
+      bot = null
+      savedToken = null
     },
   }
 }
 
 export default {
-  id: "@opencode-ai/plugin-telegram",
+  id: "virtualcode",
   server: TelegramPlugin,
 }
