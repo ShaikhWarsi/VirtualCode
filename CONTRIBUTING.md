@@ -6,7 +6,7 @@ Thanks for considering contributing to virtualcode!
 
 ```bash
 git clone https://github.com/ShaikhWarsi/VirtualCode.git
-cd opencode-telegram
+cd VirtualCode
 npm install
 npm run build
 ```
