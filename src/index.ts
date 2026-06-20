@@ -299,7 +299,7 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
   let reconnectAttempts = 0
 
   const lastForwardedBySession = new Map<string, string>()
-  const pendingTelegram = new Map<string, { chatId: number; timer: ReturnType<typeof setTimeout> }>()
+  const pendingTelegram = new Map<string, { chatId: number; timer: ReturnType<typeof setTimeout>; messageId?: number }>()
   const sessionLastSeen = new Map<string, number>()
 
   const links = loadLinks()
@@ -362,16 +362,20 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
     map.set(key, value)
   }
 
-  function setPending(sessionId: string, chatId: number) {
+  function setPending(sessionId: string, chatId: number, messageId?: number) {
     const existing = pendingTelegram.get(sessionId)
     if (existing) clearTimeout(existing.timer)
     const timer = setTimeout(() => {
       pendingTelegram.delete(sessionId)
       if (botReady && bot) {
-        bot.telegram.sendMessage(chatId, "No response received. The session may not be active on your laptop - open it there first.").catch(() => {})
+        if (messageId) {
+          bot.telegram.editMessageText(chatId, messageId, undefined, "No response received. The session may not be active on your laptop - open it there first.").catch(() => {})
+        } else {
+          bot.telegram.sendMessage(chatId, "No response received. The session may not be active on your laptop - open it there first.").catch(() => {})
+        }
       }
     }, PENDING_TIMEOUT_MS)
-    pendingTelegram.set(sessionId, { chatId, timer })
+    pendingTelegram.set(sessionId, { chatId, timer, messageId })
   }
 
   function clearPending(sessionId: string) {
@@ -920,13 +924,14 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
           try { await ctx.reply("This session is not currently active on your laptop. Open it there first, then try again.") } catch {}
           return
         }
-        let working: any = null
+        let workingMsgId: number | undefined
         try {
-          working = await ctx.reply("...")
+          const working = await ctx.reply("...")
+          workingMsgId = working.message_id
         } catch (err) {
           debugLog("working reply failed:", userError(err))
         }
-        setPending(sessionId, ctx.chat.id)
+        setPending(sessionId, ctx.chat.id, workingMsgId)
         try {
           const body: any = {
             parts: [{ type: "text", text: ctx.message.text, metadata: { opencodeTelegram: true } }],
@@ -942,15 +947,25 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
           })
           if (res?.error) {
             const msg = handlePluginError(res.error, "prompt")
-            try { await ctx.reply(sanitizeUI(msg)) } catch {}
+            const pending = pendingTelegram.get(sessionId)
+            if (pending && pending.messageId && bot) {
+              bot.telegram.editMessageText(ctx.chat.id, pending.messageId, undefined, sanitizeUI(msg, 4000)).catch(() => {
+                try { ctx.reply(sanitizeUI(msg)) } catch {}
+              })
+            } else {
+              try { await ctx.reply(sanitizeUI(msg)) } catch {}
+            }
           }
         } catch (err) {
           const msg = handlePluginError(err, "prompt")
-          try { await ctx.reply(sanitizeUI(msg)) } catch {}
-        }
-        clearPending(sessionId)
-        if (working?.message_id) {
-          try { await ctx.deleteMessage(working.message_id) } catch {}
+          const pending = pendingTelegram.get(sessionId)
+          if (pending && pending.messageId && bot) {
+            bot.telegram.editMessageText(ctx.chat.id, pending.messageId, undefined, sanitizeUI(msg, 4000)).catch(() => {
+              try { ctx.reply(sanitizeUI(msg)) } catch {}
+            })
+          } else {
+            try { await ctx.reply(sanitizeUI(msg)) } catch {}
+          }
         }
       })
 
@@ -1027,7 +1042,21 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
               .filter((p: any) => p.type === "text" && !p.synthetic)
               .map((p: any) => p.text)
               .join("\n")
-            if (text) sendToChats(chats, text)
+            if (text) {
+              if (pending?.messageId && bot) {
+                const chunks = chunkText(text, 4000)
+                bot.telegram.editMessageText(pending.chatId, pending.messageId, undefined, chunks[0]).catch(() => {
+                  sendToChats(chats, text)
+                })
+                clearTimeout(pending.timer)
+                pendingTelegram.delete(sid)
+                for (const chunk of chunks.slice(1)) {
+                  bot.telegram.sendMessage(pending.chatId, chunk).catch(() => {})
+                }
+              } else {
+                sendToChats(chats, text)
+              }
+            }
           }
         }
       } catch (err) {
