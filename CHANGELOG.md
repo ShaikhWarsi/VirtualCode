@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-06-20
+
+### Fixed
+- All text overflow vectors eliminated (session titles, directories, IDs capped)
+- `/model` not-found and `/agents` responses now chunked for long lists
+- `ctx.payload` crash guard for undefined payload in all command handlers
+- `notifyOnReconnect` messages moved after token validation
+
+### Changed
+- Session IDs now display as short 5-char format (e.g. `a1b2c` instead of `ses_...`)
+- `/link`, `/use`, `/ls` use abbreviated IDs for mobile-friendly display
+- `/start` and `/help` updated for short ID format
+- Pending message timeout now warns if session is not active
+- Inactive session detection: rejects prompts for sessions idle >120s
+- `LICENSE` year updated to 2025-2026
+- `.gitignore` hardened (`.env`, `*.log`, `.kilocode/`)
+- `install.js` now uses `stripJsonc` for `tui.json` (config no longer nuked)
+
+### Added
+- `CONTRIBUTING.md` and `SECURITY.md`
+- Session activity tracking in event handler
+
 ## [2.2.0] - 2026-06-20
 
 ### Added
