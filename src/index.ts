@@ -26,6 +26,10 @@ const MIN_PREFIX_LEN = 4
 const MAX_TOKENS_PER_CHUNK = 25
 const MIN_HISTORY_LIMIT = 1
 const FILE_MODE = 0o600
+const SESSION_ACTIVITY_TIMEOUT = 120_000
+const SHORT_ID_LEN = 5
+const MAX_TITLE_LEN = 200
+const MAX_DIR_LEN = 200
 
 let logDirEnsured = false
 function ensureLogDir() {
@@ -238,7 +242,8 @@ function chunkText(text: string, maxLen = 4000): string[] {
 
 function fmtId(id: string): string {
   if (typeof id !== "string") return "(invalid)"
-  return id.length > 12 ? id.slice(0, 12) + "..." : id
+  const stripped = id.startsWith("ses_") ? id.slice(4) : id
+  return stripped.length > SHORT_ID_LEN ? stripped.slice(0, SHORT_ID_LEN) + "..." : stripped
 }
 
 type FindResult =
@@ -246,14 +251,21 @@ type FindResult =
   | { status: "ambiguous" }
   | { status: "not_found" }
 
-function findSessionById(id: string, list: any[]): FindResult {
-  if (typeof id !== "string" || !Array.isArray(list)) return { status: "not_found" }
-  const exact = list.find((s: any) => s && typeof s.id === "string" && s.id === id)
+function findSessionById(input: string, list: any[]): FindResult {
+  if (typeof input !== "string" || !Array.isArray(list)) return { status: "not_found" }
+  const exact = list.find((s: any) => s && typeof s.id === "string" && s.id === input)
   if (exact) return { status: "found", session: exact }
-  if (id.length < MIN_PREFIX_LEN) return { status: "not_found" }
-  const prefix = list.filter((s: any) => s && typeof s.id === "string" && s.id.startsWith(id))
-  if (prefix.length === 1) return { status: "found", session: prefix[0] }
-  if (prefix.length > 1) return { status: "ambiguous" }
+  if (input.length < MIN_PREFIX_LEN) return { status: "not_found" }
+  const fullPrefix = list.filter((s: any) => s && typeof s.id === "string" && s.id.startsWith(input))
+  if (fullPrefix.length === 1) return { status: "found", session: fullPrefix[0] }
+  if (fullPrefix.length > 1) return { status: "ambiguous" }
+  const strippedPrefix = list.filter((s: any) => {
+    if (typeof s.id !== "string") return false
+    const stripped = s.id.startsWith("ses_") ? s.id.slice(4) : s.id
+    return stripped.startsWith(input)
+  })
+  if (strippedPrefix.length === 1) return { status: "found", session: strippedPrefix[0] }
+  if (strippedPrefix.length > 1) return { status: "ambiguous" }
   return { status: "not_found" }
 }
 
@@ -288,6 +300,7 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
 
   const lastForwardedBySession = new Map<string, string>()
   const pendingTelegram = new Map<string, { chatId: number; timer: ReturnType<typeof setTimeout> }>()
+  const sessionLastSeen = new Map<string, number>()
 
   const links = loadLinks()
   const chatToSession = new Map<number, string>()
@@ -354,6 +367,9 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
     if (existing) clearTimeout(existing.timer)
     const timer = setTimeout(() => {
       pendingTelegram.delete(sessionId)
+      if (botReady && bot) {
+        bot.telegram.sendMessage(chatId, "No response received. The session may not be active on your laptop - open it there first.").catch(() => {})
+      }
     }, PENDING_TIMEOUT_MS)
     pendingTelegram.set(sessionId, { chatId, timer })
   }
@@ -454,8 +470,8 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
           await ctx.reply(
             "virtualcode - OpenCode Telegram bridge\n\n" +
             "Quick setup:\n" +
-            "1. /ls - list your sessions\n" +
-            "2. /link <ID> - bind this chat\n" +
+            "1. /ls - list your sessions (shows abbreviated IDs)\n" +
+            "2. /link <ID> - bind this chat (type the short ID, e.g. a1b2c)\n" +
             "3. Send any message to talk to OpenCode\n\n" +
             "Type /help for all commands."
           )
@@ -490,7 +506,7 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
           if (old) {
             try { await ctx.reply("Switched to " + fmtId(result.session.id) + " (from " + fmtId(old) + ")") } catch {}
           } else {
-            try { await ctx.reply("Linked to " + (result.session.title || fmtId(result.session.id))) } catch {}
+            try { await ctx.reply("Linked to " + ((result.session.title || "").slice(0, MAX_TITLE_LEN) || fmtId(result.session.id))) } catch {}
           }
         } catch (err) {
           const msg = handlePluginError(err, "/link")
@@ -517,7 +533,7 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
         }
         try {
           await ctx.reply(
-            "Connected | Session: " + fmtId(sessionId) + " | Project: " + (directory || "none")
+            "Connected | Session: " + fmtId(sessionId) + " | Project: " + ((directory || "none").slice(0, MAX_DIR_LEN))
           )
         } catch {}
       })
@@ -536,8 +552,8 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
           const lines = recent.map((s: any, i: number) => {
             const num = recent.length - i
             const marker = s.id === current ? " *" : ""
-            const label = (s.title || s.id.slice(0, 16)).slice(0, 60)
-            return num + ". " + label + " -- " + s.id + marker
+            const label = (s.title || fmtId(s.id)).slice(0, 60)
+            return num + ". " + label + " -- " + fmtId(s.id) + marker
           })
           try { await ctx.reply("Sessions:\n" + (lines.length ? lines.join("\n") : "None")) } catch {}
         } catch (err) {
@@ -564,7 +580,7 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
           if (!isNaN(num) && num > 0 && num <= sessions.length) {
             const s = sessions[sessions.length - num]
             addLink(ctx.chat.id, s.id)
-            try { await ctx.reply("Switched to " + (s.title || fmtId(s.id))) } catch {}
+            try { await ctx.reply("Switched to " + ((s.title || "").slice(0, MAX_TITLE_LEN) || fmtId(s.id))) } catch {}
             return
           }
           if (!isNaN(num) && num > 0) {
@@ -581,7 +597,7 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
             return
           }
           addLink(ctx.chat.id, result.session.id)
-          try { await ctx.reply("Switched to " + (result.session.title || fmtId(result.session.id))) } catch {}
+          try { await ctx.reply("Switched to " + ((result.session.title || "").slice(0, MAX_TITLE_LEN) || fmtId(result.session.id))) } catch {}
         } catch (err) {
           const msg = handlePluginError(err, "/use")
           try { await ctx.reply(sanitizeUI(msg)) } catch {}
@@ -753,7 +769,7 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
               setModelPref(sessionId, providerID, match)
               const m = (provider.models as any)[match]
               const modelName = typeof m?.name === "string" ? m.name : match
-              try { await ctx.reply("Model set to " + providerID + "/" + match + " (" + modelName + ")") } catch {}
+              try { await ctx.reply("Model set to " + providerID + "/" + match + " (" + modelName.slice(0, MAX_TITLE_LEN) + ")") } catch {}
               found = true
               break
             }
@@ -767,7 +783,10 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
                 lines.push("  " + mid)
               }
             }
-            try { await ctx.reply(lines.join("\n")) } catch {}
+            const text = lines.join("\n")
+            for (const chunk of chunkText(text)) {
+              try { await ctx.reply(chunk) } catch {}
+            }
           }
         } catch (err) {
           const msg = handlePluginError(err, "/model")
@@ -790,9 +809,9 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
           }
           const s = res.data as any
           const lines = [
-            "Title: " + (s.title || "(untitled)"),
-            "ID: " + s.id,
-            "Project: " + (s.directory || "none"),
+            "Title: " + ((s.title || "(untitled)").slice(0, MAX_TITLE_LEN)),
+            "ID: " + fmtId(s.id),
+            "Project: " + ((s.directory || "none").slice(0, MAX_DIR_LEN)),
             "Created: " + (s.time?.created ? new Date(s.time.created).toLocaleString() : "?"),
             "Updated: " + (s.time?.updated ? new Date(s.time.updated).toLocaleString() : "?"),
           ]
@@ -850,7 +869,10 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
             const desc = typeof agent.description === "string" ? " - " + agent.description.slice(0, 80) : ""
             lines.push("  " + name + desc)
           }
-          try { await ctx.reply(lines.join("\n")) } catch {}
+          const text = lines.join("\n")
+          for (const chunk of chunkText(text)) {
+            try { await ctx.reply(chunk) } catch {}
+          }
         } catch (err) {
           const msg = handlePluginError(err, "/agents")
           try { await ctx.reply(sanitizeUI(msg)) } catch {}
@@ -861,11 +883,11 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
         if (allowedSet && (!ctx.from || !allowedSet.has(ctx.from.id))) return
         try {
           await ctx.reply(
-            "/link <sessionId>     - Bind this chat to a session\n" +
+            "/link <ID>            - Bind this chat to a session (short ID, e.g. a1b2c)\n" +
             "/unlink               - Remove binding\n" +
             "/status               - Show connection state\n" +
-            "/ls                   - List recent sessions\n" +
-            "/use <number|ID>      - Switch active session\n" +
+            "/ls                   - List recent sessions (shows short IDs)\n" +
+            "/use <N|ID>           - Switch session (by number or short ID)\n" +
             "/model                - Show/set model override\n" +
             "/model clear          - Clear model override\n" +
             "/models               - List all available models\n" +
@@ -891,6 +913,11 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
         const sessionId = links[ctx.chat.id]
         if (!sessionId) {
           try { await ctx.reply("Not linked. Use /link <ID>") } catch {}
+          return
+        }
+        const lastSeen = sessionLastSeen.get(sessionId)
+        if (lastSeen && Date.now() - lastSeen > SESSION_ACTIVITY_TIMEOUT) {
+          try { await ctx.reply("This session is not currently active on your laptop. Open it there first, then try again.") } catch {}
           return
         }
         let working: any = null
@@ -980,24 +1007,28 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
           }
           return
         }
-        if (event.type === "session.status" && event.properties.status.type === "idle") {
+        if (event.type === "session.status") {
           const sid = event.properties.sessionID
-          const pending = pendingTelegram.get(sid)
-          const chats = pending ? new Set([pending.chatId]) : sessionToChats.get(sid)
-          if (!chats || chats.size === 0) return
-          let msgs
-          try {
-            msgs = await client.session.messages({ path: { id: sid }, query: { directory, limit: 5 } })
-          } catch { return }
-          if (msgs.error || !msgs.data) return
-          const last = [...msgs.data].reverse().find((m: any) => m.info.role === "assistant")
-          if (!last || lastForwardedBySession.get(sid) === last.info.id) return
-          lruSet(lastForwardedBySession, sid, last.info.id)
-          const text = (last.parts as any[])
-            .filter((p: any) => p.type === "text" && !p.synthetic)
-            .map((p: any) => p.text)
-            .join("\n")
-          if (text) sendToChats(chats, text)
+          if (sid) sessionLastSeen.set(sid, Date.now())
+
+          if (event.properties.status.type === "idle") {
+            const pending = pendingTelegram.get(sid)
+            const chats = pending ? new Set([pending.chatId]) : sessionToChats.get(sid)
+            if (!chats || chats.size === 0) return
+            let msgs
+            try {
+              msgs = await client.session.messages({ path: { id: sid }, query: { directory, limit: 5 } })
+            } catch { return }
+            if (msgs.error || !msgs.data) return
+            const last = [...msgs.data].reverse().find((m: any) => m.info.role === "assistant")
+            if (!last || lastForwardedBySession.get(sid) === last.info.id) return
+            lruSet(lastForwardedBySession, sid, last.info.id)
+            const text = (last.parts as any[])
+              .filter((p: any) => p.type === "text" && !p.synthetic)
+              .map((p: any) => p.text)
+              .join("\n")
+            if (text) sendToChats(chats, text)
+          }
         }
       } catch (err) {
         debugLog("event handler:", userError(err))
