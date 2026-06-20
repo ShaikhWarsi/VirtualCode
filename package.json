@@ -1,6 +1,6 @@
 {
   "name": "virtualcode",
-  "version": "2.2.5",
+  "version": "2.2.6",
   "description": "OpenCode plugin that bridges your terminal sessions with Telegram",
   "type": "module",
   "license": "MIT",
