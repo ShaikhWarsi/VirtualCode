@@ -1,5 +1,7 @@
 # virtualcode
 
+> **Published on npm as [`virtualcode`](https://www.npmjs.com/package/virtualcode)**
+
 ```
  __     ___                                _
  \ \   / (_)_ __   ___  ___  _ __   ___  | |_

@@ -5,7 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0] - 2026-06-19
+## [2.2.0] - 2026-06-20
+
+### Added
+- `/session` command - Show detailed current session info (title, ID, created, updated, project, file summary)
+- `/rename <title>` command - Rename the current linked session
+- `/agents` command - List all available agents from OpenCode
+
+### Changed
+- Updated `/help` command output to include all new commands
+
+## [2.1.0] - 2026-06-19
 
 ### Added
 - `/start` command with welcome message and quick setup guide
