@@ -3,7 +3,15 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, chmodSy
 import { join } from "node:path"
 import { homedir } from "node:os"
 
-type Plugin = (input: { client: any; directory: string }, options?: any) => Promise<{
+type PluginInput = {
+  client: any
+  project?: any
+  directory: string
+  worktree?: string
+  [key: string]: any
+}
+
+type Plugin = (input: PluginInput, options?: any) => Promise<{
   event?: (input: { event: any }) => Promise<void>
   "chat.message"?: (input: any, output: any) => Promise<void>
   tool?: Record<string, any>
@@ -299,17 +307,18 @@ function delay(ms: number) {
 }
 
 async function loadTool() {
-  try {
-    const mod = await import("@kilocode/plugin/tool")
-    return mod.tool
-  } catch {
-    const mod = await import("@opencode-ai/plugin/tool")
-    return mod.tool
+  for (const pkg of ["@kilocode/plugin/tool", "@opencode-ai/plugin/tool"]) {
+    try {
+      const mod = await import(pkg)
+      if (mod?.tool) return mod.tool
+    } catch {}
   }
+  return null
 }
 
 const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
   const tool = await loadTool()
+  if (!tool) fileLog("WARN", "No plugin SDK found – tool unavailable (install @opencode-ai/plugin or @kilocode/plugin)")
   const config = options as
     | {
         allowed_users?: number[]
@@ -528,11 +537,11 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
         if (allowedSet && (!ctx.from || !allowedSet.has(ctx.from.id))) return
         try {
           await ctx.reply(
-            "virtualcode - OpenCode Telegram bridge\n\n" +
+            "virtualcode - Telegram bridge\n\n" +
             "Quick setup:\n" +
             "1. /ls - list your sessions (shows abbreviated IDs)\n" +
             "2. /link <ID> - bind this chat (type the short ID, e.g. a1b2c)\n" +
-            "3. Send any message to talk to OpenCode\n\n" +
+            "3. Send any message to talk to your AI assistant\n\n" +
             "Type /help for all commands."
           )
         } catch {}
@@ -1212,33 +1221,35 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
       }
     },
 
-    tool: {
-      telegram_send: tool({
-        description: "Send a message to Telegram chat(s) linked to the current session",
-        args: {
-          text: tool.schema.string().describe("Text to send"),
-          sessionId: tool.schema.string().optional().describe("Target session ID (defaults to current)"),
-        },
-        async execute({ text, sessionId }, ctx) {
-          if (typeof text !== "string" || text.length === 0) {
-            return { output: "No text to send." }
-          }
-          if (!botReady) {
-            return { output: "Telegram bot is not connected." }
-          }
-          if (!ctx?.sessionID && !sessionId) {
-            return { output: "No session context." }
-          }
-          const targetId = sessionId || ctx.sessionID
-          if (typeof targetId !== "string") {
-            return { output: "Invalid session ID." }
-          }
-          const safeText = text.length > 4000 ? text.slice(0, 4000) + "..." : text
-          const ok = await sendToSession(targetId, safeText)
-          return { output: ok ? "Message sent to Telegram" : "No linked chats." }
-        },
-      }),
-    },
+    ...(tool ? {
+      tool: {
+        telegram_send: (tool as NonNullable<typeof tool>)({
+          description: "Send a message to Telegram chat(s) linked to the current session",
+          args: {
+            text: (tool as NonNullable<typeof tool>).schema.string().describe("Text to send"),
+            sessionId: (tool as NonNullable<typeof tool>).schema.string().optional().describe("Target session ID (defaults to current)"),
+          },
+          async execute({ text, sessionId }: { text: string; sessionId?: string }, ctx: any) {
+            if (typeof text !== "string" || text.length === 0) {
+              return { output: "No text to send." }
+            }
+            if (!botReady) {
+              return { output: "Telegram bot is not connected." }
+            }
+            if (!ctx?.sessionID && !sessionId) {
+              return { output: "No session context." }
+            }
+            const targetId = sessionId || ctx.sessionID
+            if (typeof targetId !== "string") {
+              return { output: "Invalid session ID." }
+            }
+            const safeText = text.length > 4000 ? text.slice(0, 4000) + "..." : text
+            const ok = await sendToSession(targetId, safeText)
+            return { output: ok ? "Message sent to Telegram" : "No linked chats." }
+          },
+        }),
+      },
+    } : {}),
 
     async dispose() {
       userStopped = true
