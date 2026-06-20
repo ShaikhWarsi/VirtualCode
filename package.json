@@ -31,12 +31,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/anomalyco/opencode-telegram.git"
+    "url": "git+https://github.com/ShaikhWarsi/VirtualCode.git"
   },
   "bugs": {
-    "url": "https://github.com/anomalyco/opencode-telegram/issues"
+    "url": "https://github.com/ShaikhWarsi/VirtualCode/issues"
   },
-  "homepage": "https://github.com/anomalyco/opencode-telegram#readme",
+  "homepage": "https://github.com/ShaikhWarsi/VirtualCode#readme",
   "keywords": [
     "opencode",
     "telegram",

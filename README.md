@@ -245,7 +245,7 @@ virtualcode
 Issues and PRs welcome.
 
 ```bash
-git clone https://github.com/anomalyco/opencode-telegram.git
+git clone https://github.com/ShaikhWarsi/VirtualCode.git
 cd opencode-telegram
 npm install
 npm run build
