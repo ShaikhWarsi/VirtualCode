@@ -2,11 +2,15 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { homedir } from "node:os"
 
-const XDG_CONFIG = join(homedir(), ".config", "opencode")
+const CONFIG_DIRS = [
+  join(homedir(), ".config", "opencode"),
+  join(homedir(), ".config", "kilo"),
+]
 
 function findConfig(start, name) {
   const candidates = [
     join(start, ".opencode", name),
+    join(start, ".kilocode", name),
     join(start, name),
   ]
   for (const p of candidates) {
@@ -59,8 +63,8 @@ function stripJsonc(src) {
   return out
 }
 
-function addToConfig(filename, parser) {
-  const path = findConfig(process.cwd(), filename) || join(XDG_CONFIG, filename)
+function tryAddConfig(filename, parser, targetDir) {
+  const path = findConfig(process.cwd(), filename) || join(targetDir, filename)
   let raw = ""
   let config = { plugin: [] }
   if (existsSync(path)) {
@@ -98,6 +102,7 @@ function addToConfig(filename, parser) {
   console.log("[virtualcode] Added to " + path)
 }
 
-addToConfig("opencode.jsonc", (raw) => JSON.parse(stripJsonc(raw)))
-addToConfig("opencode.json", (raw) => JSON.parse(raw))
-addToConfig("tui.json", (raw) => JSON.parse(stripJsonc(raw)))
+tryAddConfig("opencode.jsonc", (raw) => JSON.parse(stripJsonc(raw)), CONFIG_DIRS[0])
+tryAddConfig("opencode.json", (raw) => JSON.parse(raw), CONFIG_DIRS[0])
+tryAddConfig("kilo.jsonc", (raw) => JSON.parse(stripJsonc(raw)), CONFIG_DIRS[1])
+tryAddConfig("tui.json", (raw) => JSON.parse(stripJsonc(raw)), CONFIG_DIRS[0])

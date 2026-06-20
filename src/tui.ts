@@ -2,7 +2,18 @@ import { writeFileSync, mkdirSync, existsSync, renameSync, chmodSync, statSync }
 import { join } from "node:path"
 import { homedir } from "node:os"
 
-const CONFIG_DIR = join(homedir(), ".config", "opencode")
+function getConfigDir(): string {
+  const candidates = [
+    join(homedir(), ".config", "opencode"),
+    join(homedir(), ".config", "kilo"),
+  ]
+  for (const dir of candidates) {
+    if (existsSync(dir)) return dir
+  }
+  return candidates[0]
+}
+
+const CONFIG_DIR = getConfigDir()
 const TOKEN_FILE = join(CONFIG_DIR, "telegram-token.json")
 const TOKEN_TMP = TOKEN_FILE + ".tmp"
 const LOG_FILE = join(CONFIG_DIR, "telegram-tui.log")

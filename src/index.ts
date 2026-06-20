@@ -1,24 +1,44 @@
-import { type Plugin } from "@opencode-ai/plugin"
-import { tool } from "@opencode-ai/plugin/tool"
 import { Telegraf } from "telegraf"
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, chmodSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { homedir } from "node:os"
 
-const LINK_FILE = join(homedir(), ".config", "opencode", "telegram-links.json")
+type Plugin = (input: { client: any; directory: string }, options?: any) => Promise<{
+  event?: (input: { event: any }) => Promise<void>
+  "chat.message"?: (input: any, output: any) => Promise<void>
+  tool?: Record<string, any>
+  dispose?: () => Promise<void>
+}>
+
+function getConfigDir(): string {
+  const candidates = [
+    join(homedir(), ".config", "opencode"),
+    join(homedir(), ".config", "kilo"),
+  ]
+  for (const dir of candidates) {
+    if (existsSync(dir)) return dir
+  }
+  return candidates[0]
+}
+
+function configPath(...parts: string[]): string {
+  return join(getConfigDir(), ...parts)
+}
+
+const LINK_FILE = configPath("telegram-links.json")
 const LINK_TMP = LINK_FILE + ".tmp"
-const TOKEN_FILE = join(homedir(), ".config", "opencode", "telegram-token.json")
+const TOKEN_FILE = configPath("telegram-token.json")
 const TOKEN_TMP = TOKEN_FILE + ".tmp"
-const MODELS_FILE = join(homedir(), ".config", "opencode", "telegram-models.json")
+const MODELS_FILE = configPath("telegram-models.json")
 const MODELS_TMP = MODELS_FILE + ".tmp"
-const CONFIG_DIR = join(homedir(), ".config", "opencode")
+const CONFIG_DIR = getConfigDir()
 const LOG_FILE = join(CONFIG_DIR, "telegram-plugin.log")
 const LOG_FILE_OLD = LOG_FILE + ".1"
 const MAX_LOG_SIZE = 5 * 1024 * 1024
 
 const TOKEN_REGEX = /^\d{8,12}:[\w-]{30,50}$/
 const MAX_LRU_SIZE = 100
-const PENDING_TIMEOUT_MS = 30_000
+const PENDING_TIMEOUT_MS = 120_000
 const RECONNECT_DELAYS = [5_000, 10_000, 20_000, 30_000]
 const MAX_TELEGRAM_INPUT = 4096
 const MAX_TUI_TEXT = 400
@@ -231,7 +251,7 @@ function handlePluginError(err: unknown, context: string): string {
 }
 
 function chunkText(text: string, maxLen = 4000): string[] {
-  if (!text) return [""]
+  if (!text) return []
   if (text.length <= maxLen) return [text]
   const chunks: string[] = []
   for (let i = 0; i < text.length; i += maxLen) {
@@ -278,7 +298,18 @@ function delay(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms))
 }
 
+async function loadTool() {
+  try {
+    const mod = await import("@kilocode/plugin/tool")
+    return mod.tool
+  } catch {
+    const mod = await import("@opencode-ai/plugin/tool")
+    return mod.tool
+  }
+}
+
 const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
+  const tool = await loadTool()
   const config = options as
     | {
         allowed_users?: number[]
@@ -297,6 +328,7 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
   let savedToken: string | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let reconnectAttempts = 0
+  let startCheckTimer: ReturnType<typeof setInterval> | null = null
 
   const lastForwardedBySession = new Map<string, string>()
   const pendingTelegram = new Map<string, { chatId: number; timer: ReturnType<typeof setTimeout>; messageId?: number }>()
@@ -387,12 +419,17 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
   }
 
   function scheduleReconnect() {
-    if (userStopped || !savedToken) return
     if (reconnectTimer) return
-    if (reconnectAttempts >= 10) {
-      debugLog("reconnect attempts exhausted; giving up until next event")
-      return
+    if (userStopped) {
+      const newToken = loadSavedToken()
+      if (newToken) {
+        userStopped = false
+        savedToken = newToken
+      } else {
+        return
+      }
     }
+    if (!savedToken) return
     const delayMs = RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)]
     reconnectAttempts++
     debugLog("scheduling reconnect in", delayMs, "ms (attempt", reconnectAttempts + ")")
@@ -402,6 +439,25 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
         await startBot(savedToken)
       }
     }, delayMs)
+  }
+
+  function startStartCheck() {
+    if (startCheckTimer) return
+    startCheckTimer = setInterval(async () => {
+      if (botReady || botStarting || userStopped) return
+      const saved = loadSavedToken()
+      if (saved) {
+        debugLog("start check: found saved token, starting bot")
+        await startBot(saved)
+      }
+    }, 5000)
+  }
+
+  function stopStartCheck() {
+    if (startCheckTimer) {
+      clearInterval(startCheckTimer)
+      startCheckTimer = null
+    }
   }
 
   async function sendToChats(chats: Iterable<number>, text: string): Promise<boolean> {
@@ -981,6 +1037,7 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
       }
       botReady = true
       botStarting = false
+      stopStartCheck()
 
       if (notifyOnReconnect) {
         for (const chatId of Object.keys(links)) {
@@ -1008,20 +1065,25 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
   if (existingToken) {
     await startBot(existingToken)
   }
+  startStartCheck()
 
   return {
     async event({ event }) {
-      if (!botReady) return
       try {
         if (event.type === "session.error") {
           const sessionId = event.properties.sessionID
           if (sessionId) {
             const err = event.properties.error
             const msg = handlePluginError(err, "session.error")
-            sendToSession(sessionId, msg)
+            if (botReady) {
+              await sendToSession(sessionId, msg)
+            } else {
+              debugLog("session.error (bot not ready):", msg)
+            }
           }
           return
         }
+        if (!botReady) return
         if (event.type === "session.status") {
           const sid = event.properties.sessionID
           if (sid) sessionLastSeen.set(sid, Date.now())
@@ -1036,7 +1098,7 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
             } catch { return }
             if (msgs.error || !msgs.data) return
             const last = [...msgs.data].reverse().find((m: any) => m.info.role === "assistant")
-            if (!last || lastForwardedBySession.get(sid) === last.info.id) return
+            if (!last || !last.info?.id || lastForwardedBySession.get(sid) === last.info.id) return
             lruSet(lastForwardedBySession, sid, last.info.id)
             const text = (last.parts as any[])
               .filter((p: any) => p.type === "text" && !p.synthetic)
@@ -1072,6 +1134,7 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
           const fileToken = loadSavedToken()
           const saved = configToken || envToken || fileToken
           if (saved) {
+            reconnectAttempts = 0
             await startBot(saved)
             if (!botReady) {
               debugLog("chat.message: startBot did not reach ready state")
@@ -1134,9 +1197,13 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
               part.text = sanitizeTUI("Invalid token.", MAX_TUI_TEXT)
               return
             }
-            saveToken(token)
             await startBot(token)
-            part.text = sanitizeTUI(botReady ? "Connected." : "Invalid token.", MAX_TUI_TEXT)
+            if (botReady) {
+              saveToken(token)
+              part.text = sanitizeTUI("Connected.", MAX_TUI_TEXT)
+            } else {
+              part.text = sanitizeTUI("Invalid token.", MAX_TUI_TEXT)
+            }
             return
           }
         }
@@ -1189,6 +1256,7 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
       botStarting = false
       bot = null
       savedToken = null
+      stopStartCheck()
     },
   }
 }
