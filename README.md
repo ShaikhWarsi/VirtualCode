@@ -13,256 +13,104 @@
     Talk to your terminal from your phone.
 ```
 
-A plugin for [OpenCode](https://opencode.ai) and **Kilo Code** that bridges your terminal
-sessions with Telegram. Send prompts from your phone, receive LLM responses in real time.
-The LLM can also message you back via a built-in tool.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
-│  YOUR PHONE                          YOUR TERMINAL              │
-│  ┌───────────────────┐               ┌───────────────────┐     │
-│  │ Telegram          │               │ $ opencode        │     │
-│  │                   │               │  or $ kilo        │     │
-│  │ > fix the bug     │ ─────────────>│ [AI] analyzing... │     │
-│  │                   │               │                   │     │
-│  │ [AI] Fixed. The  │ <─────────────│ [AI] Fixed. The   │     │
-│  │ issue was in...   │               │ issue was in...   │     │
-│  │                   │               │                   │     │
-│  └───────────────────┘               └───────────────────┘     │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+A plugin for **OpenCode** and **Kilo Code** that bridges your terminal with Telegram.
+Send prompts from your phone, get AI responses back. The AI can also message you via a built-in tool.
 
 ---
 
-## Installation
+## Setup
 
-```bash
+```
 npm install -g virtualcode
 ```
 
-The postinstall script automatically detects installed tools and adds the plugin to
-their config files. You can verify or manually configure each tool below.
+Then you need **two** things in your config — the plugin itself and the TUI plugin so `/telegram` shows in Ctrl+P:
 
----
+### OpenCode
 
-## OpenCode Setup
-
-### 1. Add the Plugin
-
-**Server config** (`~/.config/opencode/opencode.jsonc` or `.opencode/opencode.jsonc`):
-
+**`~/.config/opencode/opencode.jsonc`:**
 ```json
-{
-  "plugin": ["virtualcode"]
-}
+{ "plugin": ["virtualcode"] }
 ```
 
-**TUI config** (`~/.config/opencode/tui.json`):
-
+**`~/.config/opencode/tui.json`:**
 ```json
-{
-  "plugin": ["virtualcode/tui"]
-}
+{ "plugin": ["virtualcode/tui"] }
 ```
 
-> The TUI plugin registers the `/telegram` slash command in the command palette (Ctrl+P) so you can set up your bot token from the terminal.
+### Kilo Code
 
-### 2. Create a Telegram Bot
-
-```
-1. Open Telegram and search for @BotFather
-2. Send /newbot
-3. Choose a name and username for your bot
-4. Copy the token (format: 123456789:ABCdefGHIjklMNOpqrsTUVwxyz)
-```
-
-### 3. Connect the Bot
-
-In your OpenCode TUI, type **`/telegram`** in the command palette (Ctrl+P) or run:
-
-```
-/telegram <your_bot_token>
-```
-
-Or configure the token directly in your config:
-
+**`~/.config/kilo/kilo.jsonc`:**
 ```json
-{
-  "plugin": [
-    ["virtualcode", {
-      "token": "YOUR_BOT_TOKEN",
-      "allowed_users": [YOUR_TELEGRAM_USER_ID]
-    }]
-  ]
-}
+{ "plugin": ["virtualcode"] }
 ```
 
-### 4. Link a Session
-
-In your Telegram chat with the bot:
-
-```
-/ls          -- list your sessions (shows short IDs like a1b2c)
-/link a1b2c  -- bind this chat to that session
-```
-
-Now any message you send goes to that session. Responses come back automatically.
-
----
-
-## Kilo Code Setup
-
-### 1. Add the Plugin
-
-**Server config** (`~/.config/kilo/kilo.jsonc`):
-
+**`~/.config/kilo/tui.json`:**
 ```json
-{
-  "plugin": ["virtualcode"]
-}
-```
-
-**TUI config** (`~/.config/kilo/tui.json`):
-
-```json
-{
-  "plugin": ["virtualcode/tui"]
-}
-```
-
-> The TUI plugin registers the `/telegram` slash command in the Kilo command palette
-> (Ctrl+P) so you can set up your bot token without leaving the terminal.
-
-### 2. Create a Telegram Bot
-
-Same as OpenCode — talk to [@BotFather](https://t.me/botfather) on Telegram:
-
-```
-1. Search for @BotFather
-2. Send /newbot
-3. Choose a name and username
-4. Copy the token
-```
-
-### 3. Connect the Bot
-
-In your Kilo Code TUI, type **`/telegram`** in the command palette (Ctrl+P) or run:
-
-```
-/telegram <your_bot_token>
-```
-
-### 4. Link a Session
-
-In your Telegram chat with the bot:
-
-```
-/ls          -- list your Kilo sessions (shows short IDs)
-/link a1b2c  -- bind this chat to that session
+{ "plugin": ["virtualcode/tui"] }
 ```
 
 ---
 
-## Quick Start (both tools)
+## Getting a bot token
 
-```
-# 1. Install the plugin
-npm install -g virtualcode
-
-# 2. Create a bot on Telegram via @BotFather, get the token
-
-# 3. Start opencode or kilo in your project directory
-cd my-project
-opencode
-# or: kilo
-
-# 4. In the TUI, open Ctrl+P and type /telegram, paste your token
-
-# 5. On your phone, open Telegram, find your bot, and run:
-/ls
-/link a1b2c
-
-# 6. Start sending messages from your phone!
-```
+1. Open Telegram, search for **@BotFather**
+2. Send `/newbot`, pick a name and username
+3. Copy the token (looks like `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
 
 ---
 
-## Session IDs
+## Connecting
 
-Session IDs use a short format for mobile-friendly use.
+1. Run `opencode` or `kilo` in your project
+2. Type **`/telegram <token>`** in the chat (or Ctrl+P → `/telegram` → paste token)
+3. On your phone, open Telegram, find your bot, send `/ls` to see sessions
+4. Send `/link <shortID>` (e.g. `/link a1b2c`) to bind the chat to a session
 
-```
-Full ID:  ses_11c899884ffegeG6H8IQvW1UCR
-Display:  11c89...
-```
-
-- `/ls` shows abbreviated IDs: `20. What is 2+2? -- 11c89...`
-- `/link a1b2c` matches any session whose short ID starts with `a1b2c`
-- `/use a1b2c` works the same way
-- You can still use the full `ses_...` ID if you have it
+Now any message you send in that Telegram chat goes straight to the AI. Responses come back automatically.
 
 ---
 
 ## Commands
 
-### Telegram Bot Commands
+### In Telegram (talk to your bot)
 
-These are sent in your Telegram chat with the bot.
-
-| Command | Description |
+| Command | What it does |
 |---------|-------------|
-| `/start` | Welcome message and quick setup guide |
-| `/link <ID>` | Bind this chat to a session (short ID, e.g. `a1b2c`) |
-| `/unlink` | Remove the session binding |
-| `/status` | Show connection state and linked session |
-| `/ls` | List recent sessions (numbered, with title and short ID) |
-| `/use <N\|ID>` | Switch session by number (from `/ls`) or short ID |
-| `/model` | Show current model override for the linked session |
-| `/model <providerID/modelID>` | Set a model override (e.g. `openai/gpt-4o`) |
-| `/model clear` | Clear the model override (use default model) |
-| `/models` | List all available models from your configured providers |
-| `/session` | Show linked session details (title, ID, timestamps, file summary) |
-| `/rename <title>` | Rename the linked session |
-| `/agents` | List available agents |
-| `/history [N]` | View last N messages (default 20, max 100) |
-| `/help` | Show this command reference |
+| `/ls` | List sessions |
+| `/link <ID>` | Bind this chat to a session |
+| `/unlink` | Unbind |
+| `/use <N\|ID>` | Switch session (by number or ID) |
+| `/status` | Connection state |
+| `/model` | Show/set model override |
+| `/models` | List available models |
+| `/session` | Session details |
+| `/rename <title>` | Rename session |
+| `/history [N]` | Last N messages |
+| `/agents` | List agents |
+| `/help` | All commands |
 
-Any other message you send is forwarded to the linked session as a prompt. The AI
-response is sent back automatically.
+Anything that isn't a command gets sent as a prompt.
 
-### TUI Terminal Commands
+### In the TUI (`/` commands)
 
-These are typed inside the OpenCode/Kilo Code terminal (TUI).
-
-| Command | Description |
+| Command | What it does |
 |---------|-------------|
-| `/telegram` | Open the token setup dialog (Ctrl+P -> type `/telegram`) |
-| `/telegram <token>` | Connect with a bot token directly |
-| `/telegram status` | Show whether the bot is connected |
-| `/telegram disconnect` | Stop the bot and remove the saved token |
-
-These commands work with the **server plugin** — they are intercepted before reaching
-the LLM, so the bot token never gets sent to your AI provider.
+| `/telegram` | Open token setup dialog (Ctrl+P) |
+| `/telegram <token>` | Connect with a token |
+| `/telegram status` | Check if connected |
+| `/telegram disconnect` | Stop bot + remove token |
 
 ---
 
-## Configuration
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `token` | `string` | `env.TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather |
-| `allowed_users` | `number[]` | `null` (all users) | Restrict access to specific Telegram user IDs |
-| `notify_on_reconnect` | `boolean` | `false` | Send a message to linked chats when the bot reconnects |
-
-Example with all options:
+## Config options
 
 ```json
 {
+  "$schema": "https://opencode.ai/config.json",
   "plugin": [
     ["virtualcode", {
-      "token": "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
+      "token": "123456789:ABC...",
       "allowed_users": [12345678],
       "notify_on_reconnect": true
     }]
@@ -270,153 +118,42 @@ Example with all options:
 }
 ```
 
-### Environment Variables
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `token` | string | `env.TELEGRAM_BOT_TOKEN` | Bot token |
+| `allowed_users` | number[] | all users | Restrict to specific Telegram user IDs |
+| `notify_on_reconnect` | boolean | false | Ping chats when bot reconnects |
 
-| Variable | Description |
-|----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Bot token (alternative to config or `/telegram` command) |
-| `DEBUG_TELEGRAM` | Set to `1` to enable verbose debug logging |
-
----
-
-## LLM Tool: `telegram_send`
-
-The LLM can send messages to your Telegram via a built-in tool. When you're in a linked
-session, the AI can notify you of progress, ask questions, or report results.
-
-Example prompt from Telegram:
-
-```
-Check the server logs and let me know if there are errors
-```
-
-The AI will use the `telegram_send` tool to message you back with its findings.
+**Env vars:** `TELEGRAM_BOT_TOKEN` (alternative to config), `DEBUG_TELEGRAM=1` (verbose logs).
 
 ---
 
-## How It Works
+## LLM tool
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                                                                      │
-│  Telegram Bot                    OpenCode/Kilo Plugin                │
-│  ┌──────────────┐                ┌──────────────────────────────┐   │
-│  │              │   send prompt  │                              │   │
-│  │  User sends  │ ─────────────> │  session.prompt()            │   │
-│  │  a message   │                │  (async)                     │   │
-│  │              │                │                              │   │
-│  │              │   response     │  session.status -> idle      │   │
-│  │  User sees   │ <───────────── │  -> fetch last message       │   │
-│  │  AI reply    │                │  -> editMessage() on ...     │   │
-│  │  (edited     │                │                              │   │
-│  │   in-place)  │                │                              │   │
-│  └──────────────┘                └──────────────────────────────┘   │
-│                                                                      │
-│  Persistence (tool-independent):                                     │
-│  ~/.config/opencode or ~/.config/kilo/                               │
-│  ├── telegram-token.json    (bot token, save via /telegram <t>)     │
-│  ├── telegram-links.json    (chat <-> session bindings)              │
-│  └── telegram-models.json   (per-session model overrides)            │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-**Key design details:**
-
-- The working `...` message is **edited in-place** with the AI response (no orphaned messages)
-- Atomic file writes (write to `.tmp`, then rename) prevent corruption
-- All errors are sanitized before reaching any UI (no stack traces)
-- Exponential backoff auto-reconnect (5s → 10s → 20s → 30s cap)
-- LRU-bounded session tracking (max 100 entries)
-- Pending message timeout (120s) prevents memory leaks
-- Prefix matching for session IDs with ambiguity detection
-- Inactive session detection prevents prompts to stale sessions
+The AI can use `telegram_send` to message you back. Ask it to "notify me on Telegram when done" and it will.
 
 ---
 
 ## Troubleshooting
 
-**Bot doesn't respond to messages**
+**Bot not responding** → `/status` to check link, `/ls` then `/link` if not linked.
 
-```
-1. Check /status — is the chat linked to a session?
-2. If not linked, use /ls then /link <short ID>
-3. If linked, check logs at ~/.config/opencode/telegram-plugin.log
-```
+**`/telegram` not in Ctrl+P** → Make sure `virtualcode/tui` is in your `tui.json` (not `kilo.jsonc`/`opencode.jsonc` — those are for the server plugin).
 
-**"/telegram" not found in command palette (Ctrl+P)**
+**Invalid token** → Copy the full token from @BotFather, format is `1234567890:ABCdef...`.
 
-```
-Make sure virtualcode/tui is registered in your TUI config:
+**"Another instance running"** → Only one thing can use a token at once. Wait 30s or stop the other instance.
 
-  OpenCode: ~/.config/opencode/tui.json       → plugin: ["virtualcode/tui"]
-  Kilo:     ~/.config/kilo/tui.json            → plugin: ["virtualcode/tui"]
-
-Then restart opencode/kilo.
-```
-
-**"Invalid token" error**
-
-```
-1. Make sure you copied the full token from @BotFather
-2. Token format: 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
-3. Try /telegram disconnect then reconnect with the correct token
-```
-
-**"Another bot instance running" error**
-
-```
-Only one bot can use a token at a time. Check if:
-- Another opencode/kilo instance is running
-- Another app is using the same bot token
-- A previous instance didn't shut down cleanly (wait 30s)
-```
-
-**Messages not coming back from the AI**
-
-```
-1. Check that the session is still active in the TUI
-2. The bot auto-reconnects after failures (5s → 10s → 20s → 30s)
-3. Set DEBUG_TELEGRAM=1 to see detailed logs
-```
-
-**Session ID not found**
-
-```
-1. Use /ls to list sessions (shows short IDs like a1b2c...)
-2. Type the first few characters of the short ID: /link a1b2
-3. You can also use /use <number> to switch
-4. If multiple sessions match, use a longer prefix
-```
+**Slow responses** → Auto-reconnect backs off: 5s → 10s → 20s → 30s.
 
 ---
 
-## Architecture
+## How it works
 
-```
-virtualcode
-├── src/
-│   ├── index.ts      Server plugin — bot logic, session bridge, event handling
-│   └── tui.ts        TUI plugin — slash command registration, token setup dialog
-├── dist/             Compiled JavaScript output
-├── install.js        Postinstall script — auto-configures tool config files
-├── package.json      npm: virtualcode
-├── README.md
-└── LICENSE
-```
-
----
-
-## Contributing
-
-Issues and PRs welcome.
-
-```bash
-git clone https://github.com/ShaikhWarsi/VirtualCode.git
-cd VirtualCode
-npm install
-npm run build
-```
+- You text the bot → bot calls `session.prompt()` on your laptop
+- AI finishes → plugin detects `idle` status → fetches last message → edits the "..." reply in-place
+- No orphaned messages, no polling
+- Token, session links, and model overrides saved atomically in `~/.config/opencode/` (or `~/.config/kilo/`)
 
 ---
 
