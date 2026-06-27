@@ -32,7 +32,7 @@ const TOOLS = [
     configDir: join(homedir(), ".config", "kilo"),
     bin: "kilo",
     configs: [
-      { file: "kilo.jsonc", json: false, stripJsonc: true },
+      { file: "kilo.jsonc", json: false, stripJsonc: true, entries: ["virtualcode", "virtualcode/tui"] },
     ],
   },
 ]
@@ -93,7 +93,8 @@ function stripJsonc(src) {
   return out
 }
 
-function tryAddConfig(filename, parser, targetDir) {
+function tryAddConfig(filename, parser, targetDir, entries) {
+  if (!entries) entries = ["virtualcode"]
   const searchNames = [
     join(".opencode", filename),
     join(".kilocode", filename),
@@ -111,8 +112,9 @@ function tryAddConfig(filename, parser, targetDir) {
     }
   }
   if (!Array.isArray(config.plugin)) config.plugin = []
-  if (config.plugin.includes("virtualcode")) return
-  config.plugin.unshift("virtualcode")
+  const toAdd = entries.filter((e) => !config.plugin.includes(e))
+  if (toAdd.length === 0) return
+  config.plugin.unshift(...toAdd)
   mkdirSync(dirname(path), { recursive: true })
   const serialized = JSON.stringify(config, null, 2)
   if (raw && filename.endsWith("jsonc")) {
@@ -141,11 +143,11 @@ function installForTool(tool) {
   const targetDir = tool.configDir
   for (const cfg of tool.configs) {
     const parser = cfg.stripJsonc ? (raw) => JSON.parse(stripJsonc(raw)) : (raw) => JSON.parse(raw)
-    tryAddConfig(cfg.file, parser, targetDir)
+    tryAddConfig(cfg.file, parser, targetDir, cfg.entries)
   }
   if (tool.tui) {
     const parser = tool.tui.stripJsonc ? (raw) => JSON.parse(stripJsonc(raw)) : (raw) => JSON.parse(raw)
-    tryAddConfig(tool.tui.file, parser, targetDir)
+    tryAddConfig(tool.tui.file, parser, targetDir, tool.tui.entries)
   }
 }
 

@@ -78,14 +78,55 @@ function saveTokenAtomic(token: string) {
   safeChmod(TOKEN_FILE)
 }
 
-const TuiPlugin = {
-  id: "virtualcode/tui",
-  async tui(api: any) {
-    try {
-      if (!api?.keymap?.registerLayer) {
-        fileLog("WARN", "OpenCode TUI API missing keymap.registerLayer; plugin disabled")
-        return
-      }
+function openSetupDialog(api: any) {
+  if (!api.ui?.dialog?.replace || !api.ui?.DialogPrompt) {
+    fileLog("WARN", "TUI dialog API missing; cannot open setup")
+    return
+  }
+  api.ui.dialog.replace(() =>
+    api.ui.DialogPrompt({
+      title: "Telegram Setup",
+      placeholder: "Paste your BotFather token here",
+      onConfirm(token: string) {
+        try {
+          if (typeof token !== "string") return
+          const trimmed = token.trim().slice(0, MAX_TOKEN_LEN)
+          if (!trimmed) return
+          if (!TOKEN_REGEX.test(trimmed)) {
+            try {
+              api.ui?.toast?.({
+                title: "Telegram",
+                message: sanitizeTUI("Invalid token format. Expected: 1234567890:ABC-DEF..."),
+                variant: "error",
+                duration: 4000,
+              })
+            } catch {}
+            return
+          }
+          saveTokenAtomic(trimmed)
+          try {
+            api.ui?.toast?.({
+              title: "Telegram",
+              message: sanitizeTUI("Token saved! Bot will connect on next message."),
+              variant: "success",
+              duration: 4000,
+            })
+          } catch {}
+          try { api.ui?.dialog?.clear?.() } catch {}
+        } catch (err) {
+          fileLog("ERROR", "onConfirm failed:", err instanceof Error ? err.message : String(err))
+        }
+      },
+      onCancel() {
+        try { api.ui?.dialog?.clear?.() } catch {}
+      },
+    }),
+  )
+}
+
+async function registerTui(api: any) {
+  try {
+    if (typeof api?.keymap?.registerLayer === "function") {
       api.keymap.registerLayer({
         commands: [
           {
@@ -96,61 +137,41 @@ const TuiPlugin = {
             desc: "Setup or change your Telegram bot token",
             category: "Telegram",
             run() {
-              try {
-                if (!api.ui?.dialog?.replace || !api.ui?.DialogPrompt) {
-                  fileLog("WARN", "OpenCode TUI dialog API missing; cannot open setup")
-                  return
-                }
-                api.ui.dialog.replace(() =>
-                  api.ui.DialogPrompt({
-                    title: "Telegram Setup",
-                    placeholder: "Paste your BotFather token here",
-                    onConfirm(token: string) {
-                      try {
-                        if (typeof token !== "string") return
-                        const trimmed = token.trim().slice(0, MAX_TOKEN_LEN)
-                        if (!trimmed) return
-                        if (!TOKEN_REGEX.test(trimmed)) {
-                          try {
-                            api.ui?.toast?.({
-                              title: "Telegram",
-                              message: sanitizeTUI("Invalid token format. Expected: 1234567890:ABC-DEF..."),
-                              variant: "error",
-                              duration: 4000,
-                            })
-                          } catch {}
-                          return
-                        }
-                        saveTokenAtomic(trimmed)
-                        try {
-                          api.ui?.toast?.({
-                            title: "Telegram",
-                            message: sanitizeTUI("Token saved! Bot will connect on next message."),
-                            variant: "success",
-                            duration: 4000,
-                          })
-                        } catch {}
-                        try { api.ui?.dialog?.clear?.() } catch {}
-                      } catch (err) {
-                        fileLog("ERROR", "onConfirm failed:", err instanceof Error ? err.message : String(err))
-                      }
-                    },
-                    onCancel() {
-                      try { api.ui?.dialog?.clear?.() } catch {}
-                    },
-                  }),
-                )
-              } catch (err) {
-                fileLog("ERROR", "palette run failed:", err instanceof Error ? err.message : String(err))
-              }
+              openSetupDialog(api)
             },
           },
         ],
       })
-    } catch (err) {
-      fileLog("ERROR", "registerLayer failed:", err instanceof Error ? err.message : String(err))
+      return
     }
-  },
+
+    if (typeof api?.command?.register === "function") {
+      api.command.register(() => [
+        {
+          title: "/telegram",
+          value: "telegram.setup",
+          description: "Setup or change your Telegram bot token",
+          category: "Telegram",
+          slash: { name: "telegram" },
+          onSelect() {
+            openSetupDialog(api)
+          },
+        },
+      ])
+      return
+    }
+
+    fileLog("WARN", "No supported TUI API found; plugin disabled")
+  } catch (err) {
+    fileLog("ERROR", "TUI registration failed:", err instanceof Error ? err.message : String(err))
+  }
+}
+
+const TuiPlugin = {
+  id: "virtualcode/tui",
+  server: async () => ({}),
+  tui: registerTui,
 }
 
 export default TuiPlugin
+export { registerTui as tui }

@@ -1,6 +1,6 @@
 {
   "name": "virtualcode",
-  "version": "2.2.7",
+  "version": "2.2.12",
   "description": "OpenCode & Kilo Code plugin that bridges your terminal sessions with Telegram",
   "type": "module",
   "license": "MIT",
@@ -49,14 +49,14 @@
     "mobile"
   ],
   "dependencies": {
-    "@opencode-ai/plugin": "^1.17.8",
+    "@opencode-ai/plugin": "^1.17.10",
     "telegraf": "^4.16.3"
   },
   "optionalDependencies": {
-    "@kilocode/plugin": "^7.0.0"
+    "@kilocode/plugin": "^7.3.54"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.8.0"
+    "@types/node": "^22.20.0",
+    "typescript": "^5.9.3"
   }
 }
