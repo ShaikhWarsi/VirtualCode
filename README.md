@@ -56,11 +56,11 @@ a name and username, then copy the token (format: `1234567890:ABCdefGHIjklMNOpqr
 
 ### 2. Connect the Bot
 
-Start **opencode** or **kilo**, open the command palette (Ctrl+P).
+Start **opencode** or **kilo**.
 
-**OpenCode:** Type `/telegram` for a popup dialog, or `/telegram <token>` directly.
+**OpenCode:** Open the command palette (Ctrl+P), type `/telegram` for a popup dialog, or type `/telegram <token>` directly in chat.
 
-**Kilo Code:** Type `/telegram <token>` directly (popup dialog not available in Kilo).
+**Kilo Code:** Type `/telegram <token>` directly in chat. The `/telegram` command does not appear in Kilo's command palette — just type it in the chat input.
 
 The plugin saves the token automatically.
 
@@ -126,8 +126,8 @@ These are typed inside the OpenCode/Kilo Code terminal (TUI).
 
 | Command | Description |
 |---------|-------------|
-| `/telegram` | Open a token setup dialog where you paste your bot token (**OpenCode only**) |
-| `/telegram <token>` | Connect with a bot token directly (works in both OpenCode and Kilo Code) |
+| `/telegram` | Open a token setup dialog where you paste your bot token (**OpenCode only — not available in Kilo's palette**) |
+| `/telegram <token>` | Connect with a bot token directly (works in both OpenCode and Kilo Code chat input) |
 | `/telegram status` | Show whether the bot is connected |
 | `/telegram disconnect` | Stop the bot and remove the saved token |
 
@@ -188,21 +188,21 @@ The AI will use the `telegram_send` tool to message you back with its findings.
 ┌──────────────────────────────────────────────────────────────────────┐
 │                                                                      │
 │  Telegram Bot                    OpenCode/Kilo Plugin                │
-│  ┌──────────────┐                ┌──────────────────────────────┐   │
-│  │              │   send prompt  │                              │   │
-│  │  User sends  │ ─────────────> │  client.session.prompt()    │   │
-│  │  a message   │                │  (async)                     │   │
-│  │              │                │                              │   │
-│  │              │   response     │  session.status -> idle      │   │
-│  │  User sees   │ <───────────── │  -> fetch last message       │   │
-│  │  AI reply    │                │  -> editMessage() on ...     │   │
-│  │  (edited     │                │                              │   │
-│  │   in-place)  │                │                              │   │
-│  └──────────────┘                └──────────────────────────────┘   │
+│  ┌──────────────┐                ┌──────────────────────────────┐    │
+│  │              │   send prompt  │                              │    │
+│  │  User sends  │ ──────────────>│  client.session.prompt()     │    │
+│  │  a message   │                │  (async)                     │    │
+│  │              │                │                              │    │
+│  │              │   response     │  session.status -> idle      │    │
+│  │  User sees   │ <──────────────│  -> fetch last message       │    │
+│  │  AI reply    │                │  -> editMessage() on ...     │    │
+│  │  (edited     │                │                              │    │
+│  │   in-place)  │                │                              │    │
+│  └──────────────┘                └──────────────────────────────┘    │
 │                                                                      │
 │  Persistence (tool-independent):                                     │
 │  ~/.config/opencode or ~/.config/kilo/                               │
-│  ├── telegram-token.json    (bot token, save via /telegram <t>)     │
+│  ├── telegram-token.json    (bot token, save via /telegram <t>)      │
 │  ├── telegram-links.json    (chat <-> session bindings)              │
 │  └── telegram-models.json   (per-session model overrides)            │
 │                                                                      │
@@ -264,12 +264,14 @@ Restart opencode/kilo after editing.
 **"/telegram" not found in command palette (Ctrl+P)**
 
 ```
-Make sure virtualcode/tui is registered in your TUI config:
+This is expected for Kilo Code — it does not support the popup dialog.
+Just type /telegram <token> directly in the chat input instead.
 
-  OpenCode: ~/.config/opencode/tui.json       → plugin: ["virtualcode/tui"]
-  Kilo:     ~/.config/kilo/tui.json            → plugin: ["virtualcode/tui"]
+For OpenCode, make sure virtualcode/tui is registered:
 
-Then restart opencode/kilo.
+  ~/.config/opencode/tui.json → plugin: ["virtualcode/tui"]
+
+Then restart opencode.
 ```
 
 **"Invalid token" error**
