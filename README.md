@@ -43,63 +43,28 @@ npm install -g virtualcode
 ```
 
 The postinstall script automatically detects installed tools and adds the plugin to
-their config files. You can verify or manually configure each tool below.
+their config files.
 
 ---
 
-## OpenCode Setup
+## Setup
 
-### 1. Add the Plugin
+### 1. Create a Telegram Bot
 
-**Server config** (`~/.config/opencode/opencode.jsonc` or `.opencode/opencode.jsonc`):
+Open Telegram, search for [@BotFather](https://t.me/botfather), send `/newbot`, choose
+a name and username, then copy the token (format: `1234567890:ABCdefGHIjklMNOpqrsTUVwxyzABCDef` – 8-12 digits, colon, 30-50 alphanumeric/dash chars).
 
-```json
-{
-  "plugin": ["virtualcode"]
-}
-```
+### 2. Connect the Bot
 
-**TUI config** (`~/.config/opencode/tui.json`):
-
-```json
-{
-  "plugin": ["virtualcode/tui"]
-}
-```
-
-> The TUI plugin registers the `/telegram` slash command in the command palette (Ctrl+P) so you can set up your bot token from the terminal.
-
-### 2. Create a Telegram Bot
-
-```
-1. Open Telegram and search for @BotFather
-2. Send /newbot
-3. Choose a name and username for your bot
-4. Copy the token (format: 123456789:ABCdefGHIjklMNOpqrsTUVwxyz)
-```
-
-### 3. Connect the Bot
-
-In your OpenCode TUI, type **`/telegram`** in the command palette (Ctrl+P) or run:
+Start **opencode** or **kilo**, open the command palette (Ctrl+P), and type:
 
 ```
 /telegram <your_bot_token>
 ```
 
-Or configure the token directly in your config:
+That's it. The plugin saves the token automatically.
 
-```json
-{
-  "plugin": [
-    ["virtualcode", {
-      "token": "YOUR_BOT_TOKEN",
-      "allowed_users": [YOUR_TELEGRAM_USER_ID]
-    }]
-  ]
-}
-```
-
-### 4. Link a Session
+### 3. Link a Session
 
 In your Telegram chat with the bot:
 
@@ -109,83 +74,6 @@ In your Telegram chat with the bot:
 ```
 
 Now any message you send goes to that session. Responses come back automatically.
-
----
-
-## Kilo Code Setup
-
-### 1. Add the Plugin
-
-**Server config** (`~/.config/kilo/kilo.jsonc`):
-
-```json
-{
-  "plugin": ["virtualcode"]
-}
-```
-
-**TUI config** (`~/.config/kilo/tui.json`):
-
-```json
-{
-  "plugin": ["virtualcode/tui"]
-}
-```
-
-> The TUI plugin registers the `/telegram` slash command in the Kilo command palette
-> (Ctrl+P) so you can set up your bot token without leaving the terminal.
-
-### 2. Create a Telegram Bot
-
-Same as OpenCode — talk to [@BotFather](https://t.me/botfather) on Telegram:
-
-```
-1. Search for @BotFather
-2. Send /newbot
-3. Choose a name and username
-4. Copy the token
-```
-
-### 3. Connect the Bot
-
-In your Kilo Code TUI, type **`/telegram`** in the command palette (Ctrl+P) or run:
-
-```
-/telegram <your_bot_token>
-```
-
-### 4. Link a Session
-
-In your Telegram chat with the bot:
-
-```
-/ls          -- list your Kilo sessions (shows short IDs)
-/link a1b2c  -- bind this chat to that session
-```
-
----
-
-## Quick Start (both tools)
-
-```
-# 1. Install the plugin
-npm install -g virtualcode
-
-# 2. Create a bot on Telegram via @BotFather, get the token
-
-# 3. Start opencode or kilo in your project directory
-cd my-project
-opencode
-# or: kilo
-
-# 4. In the TUI, open Ctrl+P and type /telegram, paste your token
-
-# 5. On your phone, open Telegram, find your bot, and run:
-/ls
-/link a1b2c
-
-# 6. Start sending messages from your phone!
-```
 
 ---
 
@@ -217,11 +105,11 @@ These are sent in your Telegram chat with the bot.
 | `/link <ID>` | Bind this chat to a session (short ID, e.g. `a1b2c`) |
 | `/unlink` | Remove the session binding |
 | `/status` | Show connection state and linked session |
-| `/ls` | List recent sessions (numbered, with title and short ID) |
+| `/ls` / `/sessions` | List recent sessions (numbered, with title and short ID) |
 | `/use <N\|ID>` | Switch session by number (from `/ls`) or short ID |
 | `/model` | Show current model override for the linked session |
 | `/model <providerID/modelID>` | Set a model override (e.g. `openai/gpt-4o`) |
-| `/model clear` | Clear the model override (use default model) |
+| `/model clear` / `off` / `reset` | Clear the model override (use default model) |
 | `/models` | List all available models from your configured providers |
 | `/session` | Show linked session details (title, ID, timestamps, file summary) |
 | `/rename <title>` | Rename the linked session |
@@ -238,8 +126,8 @@ These are typed inside the OpenCode/Kilo Code terminal (TUI).
 
 | Command | Description |
 |---------|-------------|
-| `/telegram` | Open the token setup dialog (Ctrl+P -> type `/telegram`) |
-| `/telegram <token>` | Connect with a bot token directly |
+| `/telegram` | Open the token setup dialog (Ctrl+P -> type `/telegram`, or type in chat) |
+| `/telegram <token>` | Connect with a bot token directly (works in chat or command palette) |
 | `/telegram status` | Show whether the bot is connected |
 | `/telegram disconnect` | Stop the bot and remove the saved token |
 
@@ -252,9 +140,9 @@ the LLM, so the bot token never gets sent to your AI provider.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `token` | `string` | `env.TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather |
-| `allowed_users` | `number[]` | `null` (all users) | Restrict access to specific Telegram user IDs |
-| `notify_on_reconnect` | `boolean` | `false` | Send a message to linked chats when the bot reconnects |
+| `token` | `string` | `env.TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather (`^\d{8,12}:[\w-]{30,50}$`) |
+| `allowed_users` | `number[]` | `null` (all users) | Restrict access to specific Telegram user IDs (integer IDs, e.g. `[12345678]`) |
+| `notify_on_reconnect` | `boolean` | `false` | Send "reconnected" message to linked chats on reconnect |
 
 Example with all options:
 
@@ -262,7 +150,7 @@ Example with all options:
 {
   "plugin": [
     ["virtualcode", {
-      "token": "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
+      "token": "1234567890:ABCdefGHIjklMNOpqrsTUVwxyzABCDef",
       "allowed_users": [12345678],
       "notify_on_reconnect": true
     }]
@@ -302,7 +190,7 @@ The AI will use the `telegram_send` tool to message you back with its findings.
 │  Telegram Bot                    OpenCode/Kilo Plugin                │
 │  ┌──────────────┐                ┌──────────────────────────────┐   │
 │  │              │   send prompt  │                              │   │
-│  │  User sends  │ ─────────────> │  session.prompt()            │   │
+│  │  User sends  │ ─────────────> │  client.session.prompt()    │   │
 │  │  a message   │                │  (async)                     │   │
 │  │              │                │                              │   │
 │  │              │   response     │  session.status -> idle      │   │
@@ -336,6 +224,35 @@ The AI will use the `telegram_send` tool to message you back with its findings.
 
 ## Troubleshooting
 
+**Plugin not detected after install (or `/telegram` not available)**
+
+```
+The postinstall script should auto-configure everything. If `/telegram` isn't
+showing up, the plugin files may not have been added to your configs.
+
+Manually add to OpenCode:
+
+  Server (~/.config/opencode/opencode.jsonc):
+    { "plugin": ["virtualcode"] }
+
+  TUI (~/.config/opencode/tui.json):
+    { "plugin": ["virtualcode/tui"] }
+
+Manually add to Kilo:
+
+  Server (~/.config/kilo/kilo.jsonc):
+    { "plugin": ["virtualcode"] }
+
+  TUI (~/.config/kilo/tui.json):
+    { "plugin": ["virtualcode/tui"] }
+
+You can also set the token directly in config if you prefer editing over /telegram:
+
+  { "plugin": [["virtualcode", { "token": "YOUR_TOKEN" }]] }
+
+Restart opencode/kilo after editing.
+```
+
 **Bot doesn't respond to messages**
 
 ```
@@ -359,7 +276,8 @@ Then restart opencode/kilo.
 
 ```
 1. Make sure you copied the full token from @BotFather
-2. Token format: 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+2. Token format: 8-12 digits, colon, 30-50 alphanumeric/dash chars
+   Example: 1234567890:ABCdefGHIjklMNOpqrsTUVwxyzABCDef
 3. Try /telegram disconnect then reconnect with the correct token
 ```
 

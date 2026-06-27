@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.15] - 2026-06-27
+
+### Changed
+- Final README cleanup and polish
+
+## [2.2.14] - 2026-06-27
+
+### Fixed
+- Postinstall creates separate `tui.json` entries for Kilo Code to load TUI plugin
+- Kilo Code now properly detects `tui.json` in its config dir
+
+## [2.2.13] - 2026-06-27
+
+### Changed
+- TUI plugin registration prefers `keymap.registerLayer` over legacy `command.register`
+- Fixes palette compatibility with Kilo Code
+
+## [2.2.7] - 2026-06-20
+
+### Added
+- Postinstall auto-detects Kilo Code alongside OpenCode
+- Adds `@kilocode/plugin` as optional dependency
+- `install.js` rewritten with tool detection, multi-config support, per-tool entries
+
+## [2.2.6] - 2026-06-20
+
+### Added
+- Kilo Code support via type shim (`src/kilocode.d.ts`)
+- `startStartCheck()` – periodic check every 5s for saved token, auto-start bot
+- `stopStartCheck()` – cleanup on dispose
+- Dual config directory detection (OpenCode and Kilo)
+
+### Changed
+- Working message now **edited in-place** instead of deleted + re-sent (no flicker)
+- Error responses also edit the working message in-place instead of sending new messages
+- `telegram_send` tool dynamically loads SDK via `loadTool()` (supports both `@opencode-ai/plugin` and `@kilocode/plugin`)
+- Event handler only forwards `session.error` when bot is ready
+- Repo URLs updated to `ShaikhWarsi/VirtualCode`
+- `@opencode-ai/plugin` bumped to `^1.17.10`
+
+### Fixed
+- Token save only happens after successful `startBot()` (no more saving invalid tokens)
+- `reconnectAttempts` reset when reconnecting from `chat.message`
+- Event handler no longer crashes on missing `last.info.id`
+- Pending timeout fires correctly with working message reference
+
 ## [2.2.1] - 2026-06-20
 
 ### Fixed
@@ -17,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Session IDs now display as short 5-char format (e.g. `a1b2c` instead of `ses_...`)
 - `/link`, `/use`, `/ls` use abbreviated IDs for mobile-friendly display
 - `/start` and `/help` updated for short ID format
-- Pending message timeout now warns if session is not active
+- Pending message timeout (120s) now warns if session is not active
 - Inactive session detection: rejects prompts for sessions idle >120s
 - `LICENSE` year updated to 2025-2026
 - `.gitignore` hardened (`.env`, `*.log`, `.kilocode/`)
@@ -41,10 +87,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `/start` command with welcome message and quick setup guide
-- Token format validation (`^\d+:[\w-]+$`) before connecting
+- Token format validation (`^\d{8,12}:[\w-]{30,50}$`) before connecting
 - Auto-reconnect with exponential backoff (5s -> 10s -> 20s -> 30s cap)
 - LRU-bounded session tracking (max 100 entries)
-- Pending message timeout (30s) to prevent memory leaks
+- Pending message timeout (120s) to prevent memory leaks
 - Non-text message handler (replies "Only text messages are supported.")
 - Prefix ambiguity detection ("Multiple sessions match. Use the full ID.")
 - Graceful shutdown in `dispose()` (clears all timers, maps, and state)
@@ -53,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed all emoji characters from user-facing messages
 - `findSessionById` now returns typed result (`found | ambiguous | not_found`)
 - `lastForwardedBySession` uses LRU eviction instead of unbounded growth
-- `pendingTelegram` entries auto-expire after 30s
+- `pendingTelegram` entries auto-expire after 120s
 - Error messages are shorter and more consistent
 
 ### Fixed
