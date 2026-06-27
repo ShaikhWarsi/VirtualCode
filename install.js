@@ -32,8 +32,9 @@ const TOOLS = [
     configDir: join(homedir(), ".config", "kilo"),
     bin: "kilo",
     configs: [
-      { file: "kilo.jsonc", json: false, stripJsonc: true, entries: ["virtualcode", "virtualcode/tui"] },
+      { file: "kilo.jsonc", json: false, stripJsonc: true, entries: ["virtualcode"] },
     ],
+    tui: { file: "tui.json", json: false, stripJsonc: true, entries: ["virtualcode/tui"] },
   },
 ]
 
