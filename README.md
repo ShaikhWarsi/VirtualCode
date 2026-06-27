@@ -21,15 +21,15 @@ The LLM can also message you back via a built-in tool.
 ┌─────────────────────────────────────────────────────────────────┐
 │                                                                 │
 │  YOUR PHONE                          YOUR TERMINAL              │
-│  ┌───────────────────┐               ┌───────────────────┐     │
-│  │ Telegram          │               │ $ opencode        │     │
-│  │                   │               │  or $ kilo        │     │
-│  │ > fix the bug     │ ─────────────>│ [AI] analyzing... │     │
-│  │                   │               │                   │     │
-│  │ [AI] Fixed. The  │ <─────────────│ [AI] Fixed. The   │     │
-│  │ issue was in...   │               │ issue was in...   │     │
-│  │                   │               │                   │     │
-│  └───────────────────┘               └───────────────────┘     │
+│  ┌───────────────────┐                ┌───────────────────┐     │
+│  │ Telegram          │                │ $ opencode        │     │
+│  │                   │                │  or $ kilo        │     │
+│  │ > fix the bug     │ ──────────────>│ [AI] analyzing... │     │
+│  │                   │                │                   │     │
+│  │ [AI] Fixed. The   │ <──────────────│ [AI] Fixed. The   │     │
+│  │ issue was in...   │                │ issue was in...   │     │
+│  │                   │                │                   │     │
+│  └───────────────────┘                └───────────────────┘     │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -56,13 +56,13 @@ a name and username, then copy the token (format: `1234567890:ABCdefGHIjklMNOpqr
 
 ### 2. Connect the Bot
 
-Start **opencode** or **kilo**, open the command palette (Ctrl+P), and type:
+Start **opencode** or **kilo**, open the command palette (Ctrl+P).
 
-```
-/telegram <your_bot_token>
-```
+**OpenCode:** Type `/telegram` for a popup dialog, or `/telegram <token>` directly.
 
-That's it. The plugin saves the token automatically.
+**Kilo Code:** Type `/telegram <token>` directly (popup dialog not available in Kilo).
+
+The plugin saves the token automatically.
 
 ### 3. Link a Session
 
@@ -126,8 +126,8 @@ These are typed inside the OpenCode/Kilo Code terminal (TUI).
 
 | Command | Description |
 |---------|-------------|
-| `/telegram` | Open the token setup dialog (Ctrl+P -> type `/telegram`, or type in chat) |
-| `/telegram <token>` | Connect with a bot token directly (works in chat or command palette) |
+| `/telegram` | Open a token setup dialog where you paste your bot token (**OpenCode only**) |
+| `/telegram <token>` | Connect with a bot token directly (works in both OpenCode and Kilo Code) |
 | `/telegram status` | Show whether the bot is connected |
 | `/telegram disconnect` | Stop the bot and remove the saved token |
 
