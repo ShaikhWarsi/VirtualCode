@@ -1,6 +1,6 @@
 {
   "name": "virtualcode",
-  "version": "2.2.16",
+  "version": "2.2.24",
   "description": "OpenCode & Kilo Code plugin that bridges your terminal sessions with Telegram",
   "type": "module",
   "license": "MIT",
@@ -19,6 +19,7 @@
   "files": [
     "dist",
     "install.js",
+    "uninstall.js",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"
@@ -26,6 +27,7 @@
   "scripts": {
     "build": "tsc",
     "postinstall": "node ./install.js",
+    "preuninstall": "node ./uninstall.js",
     "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit"
   },

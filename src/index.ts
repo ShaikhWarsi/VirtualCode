@@ -19,14 +19,21 @@ type Plugin = (input: PluginInput, options?: any) => Promise<{
 }>
 
 function getConfigDir(): string {
-  const candidates = [
+  const candidates: string[] = []
+  if (process.env.APPDATA) {
+    candidates.push(join(process.env.APPDATA, "opencode"))
+    candidates.push(join(process.env.APPDATA, "kilo"))
+  }
+  candidates.push(
     join(homedir(), ".config", "opencode"),
+    join(homedir(), ".opencode"),
     join(homedir(), ".config", "kilo"),
-  ]
+    join(homedir(), ".kilocode"),
+  )
   for (const dir of candidates) {
     if (existsSync(dir)) return dir
   }
-  return candidates[0]
+  return join(homedir(), ".config", "opencode")
 }
 
 function configPath(...parts: string[]): string {
@@ -39,6 +46,8 @@ const TOKEN_FILE = configPath("telegram-token.json")
 const TOKEN_TMP = TOKEN_FILE + ".tmp"
 const MODELS_FILE = configPath("telegram-models.json")
 const MODELS_TMP = MODELS_FILE + ".tmp"
+const AGENTS_FILE = configPath("telegram-agents.json")
+const AGENTS_TMP = AGENTS_FILE + ".tmp"
 const CONFIG_DIR = getConfigDir()
 const LOG_FILE = join(CONFIG_DIR, "telegram-plugin.log")
 const LOG_FILE_OLD = LOG_FILE + ".1"
@@ -54,7 +63,6 @@ const MIN_PREFIX_LEN = 4
 const MAX_TOKENS_PER_CHUNK = 25
 const MIN_HISTORY_LIMIT = 1
 const FILE_MODE = 0o600
-const SESSION_ACTIVITY_TIMEOUT = 120_000
 const SHORT_ID_LEN = 5
 const MAX_TITLE_LEN = 200
 const MAX_DIR_LEN = 200
@@ -191,6 +199,44 @@ function setModelPref(sessionId: string, providerID: string, modelID: string) {
 function clearModelPref(sessionId: string) {
   sessionModelPrefs.delete(sessionId)
   persistModelPrefs()
+}
+
+const sessionAgentPrefs = new Map<string, string>()
+
+function loadAgentPrefs(): Map<string, string> {
+  const m = new Map<string, string>()
+  try {
+    if (existsSync(AGENTS_FILE)) {
+      const raw = readFileSync(AGENTS_FILE, "utf-8")
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        for (const [sid, agent] of Object.entries(parsed)) {
+          if (typeof agent === "string") m.set(sid, agent)
+        }
+      }
+    }
+  } catch (err) {
+    debugLog("loadAgentPrefs failed:", userError(err))
+  }
+  return m
+}
+
+function persistAgentPrefs() {
+  const obj: Record<string, string> = {}
+  for (const [sid, agent] of sessionAgentPrefs) {
+    obj[sid] = agent
+  }
+  atomicWrite(AGENTS_FILE, AGENTS_TMP, JSON.stringify(obj, null, 2))
+}
+
+function setAgentPref(sessionId: string, agent: string) {
+  sessionAgentPrefs.set(sessionId, agent)
+  persistAgentPrefs()
+}
+
+function clearAgentPref(sessionId: string) {
+  sessionAgentPrefs.delete(sessionId)
+  persistAgentPrefs()
 }
 
 function isValidToken(token: string): boolean {
@@ -341,7 +387,6 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
 
   const lastForwardedBySession = new Map<string, string>()
   const pendingTelegram = new Map<string, { chatId: number; timer: ReturnType<typeof setTimeout>; messageId?: number }>()
-  const sessionLastSeen = new Map<string, number>()
 
   const links = loadLinks()
   const chatToSession = new Map<number, string>()
@@ -366,6 +411,11 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
   const savedPrefs = loadModelPrefs()
   for (const [sid, pref] of savedPrefs) {
     sessionModelPrefs.set(sid, pref)
+  }
+
+  const savedAgentPrefs = loadAgentPrefs()
+  for (const [sid, agent] of savedAgentPrefs) {
+    sessionAgentPrefs.set(sid, agent)
   }
 
   function addLink(chatId: number, sessionId: string) {
@@ -787,12 +837,6 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
           return
         }
 
-        if (arg === "clear" || arg === "off" || arg === "reset") {
-          clearModelPref(sessionId)
-          try { await ctx.reply("Model override cleared. Session will use default.") } catch {}
-          return
-        }
-
         try {
           const res = await client.config.providers()
           if (res.error || !res.data) {
@@ -948,6 +992,29 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
         }
       })
 
+      bot.command("agent", async (ctx) => {
+        if (allowedSet && (!ctx.from || !allowedSet.has(ctx.from.id))) return
+        const sessionId = links[ctx.chat.id]
+        if (!sessionId) {
+          try { await ctx.reply("Not linked. Use /link <ID>") } catch {}
+          return
+        }
+        const arg = (ctx.payload || "").trim().slice(0, 200)
+
+        if (!arg) {
+          const current = sessionAgentPrefs.get(sessionId)
+          if (current) {
+            try { await ctx.reply("Agent: " + current) } catch {}
+          } else {
+            try { await ctx.reply("No agent override set. Send /agents to see available agents, or /agent <name> to set one.") } catch {}
+          }
+          return
+        }
+
+        setAgentPref(sessionId, arg)
+        try { await ctx.reply("Agent set to " + arg.slice(0, MAX_TITLE_LEN)) } catch {}
+      })
+
       bot.command("help", async (ctx) => {
         if (allowedSet && (!ctx.from || !allowedSet.has(ctx.from.id))) return
         try {
@@ -958,8 +1025,8 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
             "/ls                   - List recent sessions (shows short IDs)\n" +
             "/use <N|ID>           - Switch session (by number or short ID)\n" +
             "/model                - Show/set model override\n" +
-            "/model clear          - Clear model override\n" +
             "/models               - List all available models\n" +
+            "/agent                - Show/set agent override\n" +
             "/agents               - List available agents\n" +
             "/session              - Show current session details\n" +
             "/rename <title>       - Rename current session\n" +
@@ -984,11 +1051,6 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
           try { await ctx.reply("Not linked. Use /link <ID>") } catch {}
           return
         }
-        const lastSeen = sessionLastSeen.get(sessionId)
-        if (lastSeen && Date.now() - lastSeen > SESSION_ACTIVITY_TIMEOUT) {
-          try { await ctx.reply("This session is not currently active on your laptop. Open it there first, then try again.") } catch {}
-          return
-        }
         let workingMsgId: number | undefined
         try {
           const working = await ctx.reply("...")
@@ -1004,6 +1066,10 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
           const modelPref = sessionModelPrefs.get(sessionId)
           if (modelPref) {
             body.model = { providerID: modelPref.providerID, modelID: modelPref.modelID }
+          }
+          const agentPref = sessionAgentPrefs.get(sessionId)
+          if (agentPref) {
+            body.agent = agentPref
           }
           const res = await client.session.prompt({
             path: { id: sessionId },
@@ -1095,7 +1161,6 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
         if (!botReady) return
         if (event.type === "session.status") {
           const sid = event.properties.sessionID
-          if (sid) sessionLastSeen.set(sid, Date.now())
 
           if (event.properties.status.type === "idle") {
             const pending = pendingTelegram.get(sid)
@@ -1137,85 +1202,61 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
 
     "chat.message": async (_input, output) => {
       try {
-        if (!botReady && !botStarting) {
-          const configToken = config?.token
-          const envToken = process.env.TELEGRAM_BOT_TOKEN
-          const fileToken = loadSavedToken()
-          const saved = configToken || envToken || fileToken
-          if (saved) {
-            reconnectAttempts = 0
-            await startBot(saved)
-            if (!botReady) {
-              debugLog("chat.message: startBot did not reach ready state")
-              return
-            }
-          }
-        }
         if (!output || !Array.isArray(output.parts)) return
+        const remaining: any[] = []
         for (const part of output.parts as any[]) {
-          if (!part || part.type !== "text" || typeof part.text !== "string") continue
-          let text = part.text
-          if (text.length > MAX_TELEGRAM_INPUT) {
-            text = text.slice(0, MAX_TELEGRAM_INPUT)
+          if (!part || part.type !== "text" || typeof part.text !== "string") {
+            remaining.push(part)
+            continue
+          }
+          const text = part.text
+          if (text.length > MAX_TELEGRAM_INPUT || !text.startsWith("/telegram")) {
+            remaining.push(part)
+            continue
           }
 
-          if (text.startsWith("/telegram")) {
-            const rawArgs = text.slice("/telegram".length).trim().slice(0, 200)
-            const cmd = rawArgs.toLowerCase()
+          const rawArgs = text.slice("/telegram".length).trim().slice(0, 200)
+          const cmd = rawArgs.toLowerCase()
 
-            if (cmd === "disconnect" || cmd === "stop") {
-              userStopped = true
-              if (reconnectTimer) {
-                clearTimeout(reconnectTimer)
-                reconnectTimer = null
-              }
-              try { bot?.stop() } catch {}
-              botReady = false
-              bot = null
-              botStarting = false
-              savedToken = null
-              clearSavedToken()
-              part.text = "Telegram bot disconnected and token removed."
-              return
+          if (cmd === "disconnect" || cmd === "stop") {
+            userStopped = true
+            if (reconnectTimer) {
+              clearTimeout(reconnectTimer)
+              reconnectTimer = null
             }
+            try { bot?.stop() } catch {}
+            botReady = false
+            bot = null
+            botStarting = false
+            savedToken = null
+            clearSavedToken()
+            continue
+          }
 
-            if (cmd === "status" || cmd === "") {
-              if (botReady) {
-                part.text =
-                  "Telegram bot is connected.\n" +
-                  "- /telegram <new_token> - Change bot token\n" +
-                  "- /telegram disconnect - Stop bot and remove token\n" +
-                  "- /telegram - Open setup dialog (type /telegram in command palette)"
-              } else {
-                part.text =
-                  "Telegram bot is not connected.\n" +
-                  "- /telegram <your_bot_token> - Connect with a token\n" +
-                  "- /telegram - Open setup dialog (type /telegram in command palette)"
-              }
-              part.text = sanitizeTUI(part.text, MAX_TUI_TEXT)
-              return
-            }
+          if (cmd === "status" || cmd === "") continue
 
-            const tokenMatch = rawArgs.match(/^\s*["'`]*([^\s"'`]+)["'`]*\s*$/)
-            if (!tokenMatch) {
-              part.text = sanitizeTUI("Invalid token.", MAX_TUI_TEXT)
-              return
+          const tokenMatch = rawArgs.match(/^\s*["'`]*([^\s"'`]+)["'`]*\s*$/)
+          if (!tokenMatch) continue
+          const token = tokenMatch[1]
+          if (!isValidToken(token)) continue
+
+          if (!botReady && !botStarting) {
+            const configToken = config?.token
+            const envToken = process.env.TELEGRAM_BOT_TOKEN
+            const fileToken = loadSavedToken()
+            const saved = configToken || envToken || fileToken
+            if (saved) {
+              reconnectAttempts = 0
+              await startBot(saved)
             }
-            const token = tokenMatch[1]
-            if (!isValidToken(token)) {
-              part.text = sanitizeTUI("Invalid token.", MAX_TUI_TEXT)
-              return
-            }
-            await startBot(token)
-            if (botReady) {
-              saveToken(token)
-              part.text = sanitizeTUI("Connected.", MAX_TUI_TEXT)
-            } else {
-              part.text = sanitizeTUI("Invalid token.", MAX_TUI_TEXT)
-            }
-            return
+          }
+
+          await startBot(token)
+          if (botReady) {
+            saveToken(token)
           }
         }
+        output.parts = remaining
       } catch (err) {
         debugLog("chat.message:", userError(err))
       }

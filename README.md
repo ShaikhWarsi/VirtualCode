@@ -13,6 +13,8 @@
     Talk to your terminal from your phone.
 ```
 
+> **Like this project? [Star it on GitHub](https://github.com/ShaikhWarsi/VirtualCode) ⭐**
+
 A plugin for [OpenCode](https://opencode.ai) and **Kilo Code** that bridges your terminal
 sessions with Telegram. Send prompts from your phone, receive LLM responses in real time.
 The LLM can also message you back via a built-in tool.
@@ -36,6 +38,11 @@ The LLM can also message you back via a built-in tool.
 
 ---
 
+## Prerequisites
+
+- **Node.js 18+** required (the install script uses ESM `import`)
+- **OpenCode** or **Kilo Code** installed
+
 ## Installation
 
 ```bash
@@ -56,13 +63,13 @@ a name and username, then copy the token (format: `1234567890:ABCdefGHIjklMNOpqr
 
 ### 2. Connect the Bot
 
-Start **opencode** or **kilo**.
+Start **opencode** or **kilo**, then type this directly in the bottom chat input (not the command palette):
 
-**OpenCode:** Open the command palette (Ctrl+P), type `/telegram` for a popup dialog, or type `/telegram <token>` directly in chat.
+```
+/telegram <your_bot_token>
+```
 
-**Kilo Code:** Type `/telegram <token>` directly in chat. The `/telegram` command does not appear in Kilo's command palette — just type it in the chat input.
-
-The plugin saves the token automatically.
+The plugin saves the token automatically. On first run it may take a few seconds to load — this is normal.
 
 ### 3. Link a Session
 
@@ -109,25 +116,30 @@ These are sent in your Telegram chat with the bot.
 | `/use <N\|ID>` | Switch session by number (from `/ls`) or short ID |
 | `/model` | Show current model override for the linked session |
 | `/model <providerID/modelID>` | Set a model override (e.g. `openai/gpt-4o`) |
-| `/model clear` / `off` / `reset` | Clear the model override (use default model) |
+
 | `/models` | List all available models from your configured providers |
+| `/agent` | Show current agent override for the linked session |
+| `/agent <name>` | Switch to a specific agent (e.g. `build`, `plan`) |
+| `/agents` | List available agents |
 | `/session` | Show linked session details (title, ID, timestamps, file summary) |
 | `/rename <title>` | Rename the linked session |
-| `/agents` | List available agents |
 | `/history [N]` | View last N messages (default 20, max 100) |
 | `/help` | Show this command reference |
+
+Type `/help` in Telegram to see all available commands. Any command not listed
+in the table above is not supported yet (support coming soon) and will be sent
+as a normal message to the LLM instead.
 
 Any other message you send is forwarded to the linked session as a prompt. The AI
 response is sent back automatically.
 
-### TUI Terminal Commands
+### Terminal Commands
 
-These are typed inside the OpenCode/Kilo Code terminal (TUI).
+These are typed inside the OpenCode/Kilo Code chat input.
 
 | Command | Description |
 |---------|-------------|
-| `/telegram` | Open a token setup dialog where you paste your bot token (**OpenCode only — not available in Kilo's palette**) |
-| `/telegram <token>` | Connect with a bot token directly (works in both OpenCode and Kilo Code chat input) |
+| `/telegram <token>` | Connect with a bot token |
 | `/telegram status` | Show whether the bot is connected |
 | `/telegram disconnect` | Stop the bot and remove the saved token |
 
@@ -218,7 +230,7 @@ The AI will use the `telegram_send` tool to message you back with its findings.
 - LRU-bounded session tracking (max 100 entries)
 - Pending message timeout (120s) prevents memory leaks
 - Prefix matching for session IDs with ambiguity detection
-- Inactive session detection prevents prompts to stale sessions
+- No idle timeout — the bridge works as long as the TUI is open, even if you're not actively typing
 
 ---
 
@@ -261,17 +273,25 @@ Restart opencode/kilo after editing.
 3. If linked, check logs at ~/.config/opencode/telegram-plugin.log
 ```
 
-**"/telegram" not found in command palette (Ctrl+P)**
+**Keep your laptop session open and linked**
 
 ```
-This is expected for Kilo Code — it does not support the popup dialog.
-Just type /telegram <token> directly in the chat input instead.
+For the bridge to work, the session on your laptop must be the same one you
+linked in Telegram. If you open a different session on your laptop while Telegram
+is linked to another, the bridge may break or behave unexpectedly.
 
-For OpenCode, make sure virtualcode/tui is registered:
+We are working on a fix. For now, keep the session open and active on your
+laptop for reliable operation.
+```
 
-  ~/.config/opencode/tui.json → plugin: ["virtualcode/tui"]
+**Don't share bot tokens across devices or tools**
 
-Then restart opencode.
+```
+Do not use the same bot token on multiple laptops or machines — it will cause
+conflicts and the bridge may break.
+
+If you have both Kilo Code and OpenCode installed, use a separate bot token
+for each. Create a new bot via @BotFather for the second tool.
 ```
 
 **"Invalid token" error**
@@ -283,13 +303,12 @@ Then restart opencode.
 3. Try /telegram disconnect then reconnect with the correct token
 ```
 
-**"Another bot instance running" error**
+**"Another bot instance running" error (409 Conflict)**
 
 ```
-Only one bot can use a token at a time. Check if:
-- Another opencode/kilo instance is running
-- Another app is using the same bot token
-- A previous instance didn't shut down cleanly (wait 30s)
+Only one bot can use a token at a time. If you restart opencode/kilo quickly,
+the old bot instance may still be connected. Wait ~30 seconds or kill all
+node processes to free the token.
 ```
 
 **Messages not coming back from the AI**
@@ -307,6 +326,77 @@ Only one bot can use a token at a time. Check if:
 2. Type the first few characters of the short ID: /link a1b2
 3. You can also use /use <number> to switch
 4. If multiple sessions match, use a longer prefix
+```
+
+**`/telegram` does nothing when typed**
+
+```
+The plugin is probably not loaded. Check your config file:
+
+  ~/.config/opencode/opencode.jsonc or ~/.config/kilo/kilo.jsonc
+
+Make sure "virtualcode" is in the plugin array. If not, add it and restart.
+```
+
+**`npm install -g virtualcode` fails**
+
+```
+On macOS/Linux you may need sudo:
+  sudo npm install -g virtualcode
+
+Or fix your npm permissions. Also make sure you have Node.js 18 or later.
+```
+
+**Bot connects but ignores messages**
+
+```
+You may be using the wrong token, or a bot was started with a different
+token previously. Try /telegram disconnect then reconnect with the correct
+token from @BotFather.
+```
+
+**`telegram-token.json` exists but bot won't start**
+
+```
+The file may be corrupted or the token format invalid. Delete it and reconnect:
+
+rm ~/.config/opencode/telegram-token.json
+# then type /telegram <your_token> again
+```
+
+**Telegram rate limits**
+
+```
+Telegram allows roughly 30 messages per second per chat. This won't matter
+for normal use but may clip large AI responses sent in rapid succession.
+The plugin handles chunking, but very long responses may be throttled.
+```
+
+**Token stored in plain text**
+
+```
+Your bot token is saved in plain text at:
+  ~/.config/opencode/telegram-token.json (or ~/.config/kilo/telegram-token.json)
+
+It never leaves your machine -- /telegram commands are intercepted before
+reaching the LLM. Still, treat it like a password.
+```
+
+## Uninstall
+
+```bash
+npm uninstall -g virtualcode
+```
+
+Then manually remove `"virtualcode"` from your plugin configs:
+
+- `~/.config/opencode/opencode.jsonc` or `~/.config/kilo/kilo.jsonc` (server plugin)
+- `~/.config/opencode/tui.json` or `~/.config/kilo/tui.json` (TUI plugin)
+
+Optionally delete saved data:
+
+```bash
+rm -rf ~/.config/opencode/telegram-* ~/.config/kilo/telegram-*
 ```
 
 ---
@@ -327,6 +417,16 @@ virtualcode
 
 ---
 
+## What's Next
+
+- Support for more CLI tools beyond OpenCode and Kilo Code
+- WhatsApp integration
+- Improved multi-session handling
+
+Stay tuned.
+
+---
+
 ## Contributing
 
 Issues and PRs welcome.
@@ -339,6 +439,10 @@ npm run build
 ```
 
 ---
+
+---
+
+**Like this project? [Star it on GitHub](https://github.com/ShaikhWarsi/VirtualCode) ⭐**
 
 ## License
 

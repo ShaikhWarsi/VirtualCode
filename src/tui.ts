@@ -3,14 +3,21 @@ import { join } from "node:path"
 import { homedir } from "node:os"
 
 function getConfigDir(): string {
-  const candidates = [
+  const candidates: string[] = []
+  if (process.env.APPDATA) {
+    candidates.push(join(process.env.APPDATA, "opencode"))
+    candidates.push(join(process.env.APPDATA, "kilo"))
+  }
+  candidates.push(
     join(homedir(), ".config", "opencode"),
+    join(homedir(), ".opencode"),
     join(homedir(), ".config", "kilo"),
-  ]
+    join(homedir(), ".kilocode"),
+  )
   for (const dir of candidates) {
     if (existsSync(dir)) return dir
   }
-  return candidates[0]
+  return join(homedir(), ".config", "opencode")
 }
 
 const CONFIG_DIR = getConfigDir()
@@ -169,7 +176,6 @@ async function registerTui(api: any) {
 
 const TuiPlugin = {
   id: "virtualcode/tui",
-  server: async () => ({}),
   tui: registerTui,
 }
 

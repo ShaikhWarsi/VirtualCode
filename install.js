@@ -1,11 +1,11 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
-import { join, dirname } from "node:path"
+import { join, dirname, delimiter } from "node:path"
 import { homedir } from "node:os"
 
 function hasCommand(cmd) {
   const isWin = process.platform === "win32"
   const pathExt = isWin ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";") : [""]
-  const pathDirs = (process.env.PATH || "").split(require("path").delimiter)
+  const pathDirs = (process.env.PATH || "").split(delimiter)
   for (const dir of pathDirs) {
     for (const ext of pathExt) {
       if (existsSync(join(dir, cmd + ext))) return true
@@ -14,22 +14,30 @@ function hasCommand(cmd) {
   return false
 }
 
+function configDirs(name) {
+  const dirs = [join(homedir(), ".config", name)]
+  const appdata = process.env.APPDATA
+  if (appdata) dirs.push(join(appdata, name))
+  dirs.push(join(homedir(), "." + name))
+  return dirs
+}
+
 const TOOLS = [
   {
     id: "opencode",
     label: "OpenCode",
-    configDir: join(homedir(), ".config", "opencode"),
+    dirs: configDirs("opencode"),
     bin: "opencode",
     configs: [
       { file: "opencode.jsonc", json: false, stripJsonc: true },
       { file: "opencode.json", json: true, stripJsonc: false },
     ],
-    tui: { file: "tui.json", json: false, stripJsonc: true },
+    tui: { file: "tui.json", json: false, stripJsonc: true, entries: ["virtualcode/tui"] },
   },
   {
     id: "kilo",
     label: "Kilo Code",
-    configDir: join(homedir(), ".config", "kilo"),
+    dirs: configDirs("kilo"),
     bin: "kilo",
     configs: [
       { file: "kilo.jsonc", json: false, stripJsonc: true, entries: ["virtualcode"] },
@@ -39,7 +47,11 @@ const TOOLS = [
 ]
 
 function detectTools() {
-  return TOOLS.filter((t) => existsSync(t.configDir) || hasCommand(t.bin))
+  return TOOLS.filter((t) => t.dirs.some((d) => existsSync(d)) || hasCommand(t.bin))
+}
+
+function findToolDir(tool) {
+  return tool.dirs.find((d) => existsSync(d)) || tool.dirs[0]
 }
 
 function findConfig(start, names) {
@@ -104,12 +116,15 @@ function tryAddConfig(filename, parser, targetDir, entries) {
   const path = findConfig(process.cwd(), searchNames) || join(targetDir, filename)
   let raw = ""
   let config = { plugin: [] }
+  let parsedOk = false
   if (existsSync(path)) {
     try {
       raw = readFileSync(path, "utf-8")
       config = parser(raw)
+      parsedOk = true
     } catch {
-      config = { plugin: [] }
+      console.log("[virtualcode] Could not parse existing " + path + " \u2014 leaving it untouched. Please add 'virtualcode' to its plugin array manually.")
+      return
     }
   }
   if (!Array.isArray(config.plugin)) config.plugin = []
@@ -118,7 +133,7 @@ function tryAddConfig(filename, parser, targetDir, entries) {
   config.plugin.unshift(...toAdd)
   mkdirSync(dirname(path), { recursive: true })
   const serialized = JSON.stringify(config, null, 2)
-  if (raw && filename.endsWith("jsonc")) {
+  if (parsedOk && raw && filename.endsWith("jsonc")) {
     const lines = raw.split("\n")
     const pluginLineIdx = lines.findIndex((l) => /^\s*"plugin"\s*:/.test(l))
     if (pluginLineIdx !== -1) {
@@ -141,7 +156,7 @@ function tryAddConfig(filename, parser, targetDir, entries) {
 }
 
 function installForTool(tool) {
-  const targetDir = tool.configDir
+  const targetDir = findToolDir(tool)
   for (const cfg of tool.configs) {
     const parser = cfg.stripJsonc ? (raw) => JSON.parse(stripJsonc(raw)) : (raw) => JSON.parse(raw)
     tryAddConfig(cfg.file, parser, targetDir, cfg.entries)
