@@ -5,12 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.24] - 2026-06-29
+
+### Added
+- Agent preferences with persistence (`telegram-agents.json`, `/agent`, `/agents` commands)
+- Dedicated uninstall script (`uninstall.js`, `preuninstall` npm hook)
+- Windows config directory support via `%APPDATA%`
+- `.opencode` and `.kilocode` directories in config detection
+- `findToolDir()` helper for multi-candidate config directories
+- Parse guard in install script (skip broken configs instead of overwriting)
+
+### Changed
+- `chat.message` handler now properly filters `/telegram` parts instead of replacing text in-place
+- TUI plugin no longer exports unnecessary `server` property
+- `.gitignore` hardened with `*.tsbuildinfo`, `bun.lock`, `coverage/`, `.nyc_output/`
+
+### Removed
+- Inactive session guard (`sessionLastSeen`, `SESSION_ACTIVITY_TIMEOUT`)
+- `/model clear`, `/model off`, `/model reset` commands
+
 ## [2.2.16] - 2026-06-27
 
 ### Changed
 - README: fixed invalid example token (failed regex validation)
 - README: fixed diagram (session.prompt → client.session.prompt)
-- README: added missing command aliases (`/sessions`, `/model off`/`/model reset`)
+- README: added missing `/sessions` command alias
 - CHANGELOG: added missing versions v2.2.6–v2.2.15, fixed 30s→120s timeout values
 
 ## [2.2.15] - 2026-06-27

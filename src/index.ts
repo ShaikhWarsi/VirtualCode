@@ -1162,7 +1162,7 @@ const TelegramPlugin: Plugin = async ({ client, directory }, options) => {
         if (event.type === "session.status") {
           const sid = event.properties.sessionID
 
-          if (event.properties.status.type === "idle") {
+          if (event.properties.status?.type === "idle") {
             const pending = pendingTelegram.get(sid)
             const chats = pending ? new Set([pending.chatId]) : sessionToChats.get(sid)
             if (!chats || chats.size === 0) return

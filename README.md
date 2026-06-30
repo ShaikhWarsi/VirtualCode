@@ -50,7 +50,7 @@ npm install -g virtualcode
 ```
 
 The postinstall script automatically detects installed tools and adds the plugin to
-their config files.
+their config files. **Restart opencode/kilo after install** for the plugin to load.
 
 ---
 
@@ -140,11 +140,16 @@ These are typed inside the OpenCode/Kilo Code chat input.
 | Command | Description |
 |---------|-------------|
 | `/telegram <token>` | Connect with a bot token |
-| `/telegram status` | Show whether the bot is connected |
+| `/telegram status` | Show whether the bot is connected. If the plugin is installed, your own message gets intercepted and shows the bot status instead. If the plugin is not installed, the command is sent to the LLM as a normal message (which will likely confuse it) |
 | `/telegram disconnect` | Stop the bot and remove the saved token |
 
-These commands work with the **server plugin** — they are intercepted before reaching
-the LLM, so the bot token never gets sent to your AI provider.
+These commands are intercepted by the **TUI plugin** before reaching the LLM, so the
+bot token never gets sent to your AI provider. If the TUI plugin isn't loaded
+(e.g. you only installed the server plugin), these commands will reach the LLM
+as normal prompts.
+
+Any command not listed above is not supported yet (support coming soon) and will
+be sent as a normal message to the LLM instead.
 
 ---
 
@@ -235,6 +240,17 @@ The AI will use the `telegram_send` tool to message you back with its findings.
 ---
 
 ## Troubleshooting
+
+**How to tell if the plugin is installed**
+
+Not sure if the plugin loaded? Type `/telegram status` in the chat input.
+
+- **Plugin is installed** — your own message will turn into a status response (e.g. "Bot is connected" or "No token set"). The command never reaches the LLM.
+- **Plugin is NOT installed** — the message gets sent to the LLM like any other prompt, and the AI will respond with something like "I don't have access to Telegram" or get confused.
+
+If your message turns into a status, you're good. If the LLM replies to it, the plugin isn't loaded — see below.
+
+---
 
 **Plugin not detected after install (or `/telegram` not available)**
 
